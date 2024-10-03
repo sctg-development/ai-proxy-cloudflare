@@ -1,4 +1,8 @@
-async function handleRequest(request, env) {
+// Copyright:
+// Original author: Janlay Wu https://github.com/janlay published under MIT License
+// Modified by: Ronan LE MEILLAT
+
+async function handleRequest(request: Request, env: Env): Promise<Response> {
   const { pathname } = new URL(request.url);
   const [_, token, next, ...params] = pathname.split('/');
 
@@ -6,7 +10,7 @@ async function handleRequest(request, env) {
     return proxy(request, env);
   } else if (token === env.ACCESS_TOKEN) {
     console.log('Accessing master handler');
-    var result;
+    let result: string | undefined;
     if (request.method === 'DELETE') {
       await deleteUser(next, env);
       result = 'ok';
@@ -22,15 +26,15 @@ async function handleRequest(request, env) {
   throw 'Access forbidden';
 }
 
-async function proxy(request, env) {
+async function proxy(request: Request, env: Env): Promise<Response> {
   const headers = new Headers(request.headers);
   const authKey = 'Authorization';
-  const token = headers.get(authKey).split(' ').pop();
+  const token = headers.get(authKey)?.split(' ').pop();
   if (!token) throw 'Auth required';
 
   // validate user
-  const users = await env.KV.get("users", { type: 'json' }) || {};
-  let name;
+  const users: Record<string, { key: string }> = await env.KV_AI_PROXY.get("users", { type: 'json' }) || {};
+  let name: string | undefined;
   for (let key in users)
     if (users[key].key === token)
       name = key;
@@ -40,41 +44,45 @@ async function proxy(request, env) {
 
   // proxy the request
   const url = new URL(request.url);
-  // 1. replace with the official host
-  url.host = 'api.openai.com';
-  // 2. replace with the real API key
-  headers.set(authKey, `Bearer ${env.OPENAPI_API_KEY}`);
-  // 3. issue the underlying request
+  // 1. Check if the request include the final host in the X-Host-Final header
+  const host = headers.get('X-Host-Final');
+  // 2. replace url.host whit the host from the X-Host-Final header or 'api.openai.com' if not present
+  url.host = host || 'api.openai.com';
+  // 3. Check if an API ley is present in the KV for this host
+  const apiKey = await env.KV_AI_PROXY.get(url.host, { type: 'text' });
+  // 4. replace with the real API key
+  headers.set(authKey, `Bearer ${apiKey || env.OPENAPI_API_KEY}`);
+  // 5. issue the underlying request
   // Only pass body if request method is not 'GET'
   const requestBody = request.method !== 'GET' ? JSON.stringify(await request.json()) : null;
-  return fetch(url, {
+  return fetch(url.toString(), {
     method: request.method,
-    headers: headers,
-    body: requestBody,
+    headers: {...headers},
+    body: requestBody
   });
 }
 
-async function registerUser(user, env) {
+async function registerUser(user: string | undefined, env: Env): Promise<string> {
   if (!user?.length) throw 'Invalid username1';
 
-  const users = await env.KV.get("users", { type: 'json' }) || {};
+  const users: Record<string, { key: string }> = await env.KV_AI_PROXY.get("users", { type: 'json' }) || {};
   const key = generateAPIKey();
   users[user] = { key };
-  await env.KV.put("users", JSON.stringify(users));
+  await env.KV_AI_PROXY.put("users", JSON.stringify(users));
   return key;
 }
 
-async function deleteUser(user, env) {
+async function deleteUser(user: string | undefined, env: Env): Promise<void> {
   if (!user?.length) throw 'Invalid username2';
 
-  const users = await env.KV.get("users", { type: 'json' }) || {};
+  const users: Record<string, { key: string }> = await env.KV_AI_PROXY.get("users", { type: 'json' }) || {};
   if (!users[user]) throw 'User not found';
 
   delete users[user];
-  await env.KV.put("users", JSON.stringify(users));
+  await env.KV_AI_PROXY.put("users", JSON.stringify(users));
 }
 
-function generateAPIKey() {
+function generateAPIKey(): string {
   const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
   let apiKey = 'sk-cfw';
 
@@ -87,7 +95,7 @@ function generateAPIKey() {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request: Request, env: Env): Promise<Response> {
     return handleRequest(request, env).catch(err => new Response(err || 'Unknown reason', { status: 403 }))
   }
 };
