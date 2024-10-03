@@ -16,6 +16,12 @@ An AI API proxy running with Cloudflare worker, supporting multiple AI providers
 - [ ] Time-limited
 - [ ] Stats for usage
 
+## TL;DR
+
+1. Clone this repository to your local machine.
+2. Install npm dependencies.
+3. Deploy the worker script to Cloudflare. with `npm run deploy`.  
+
 ## Setup
 
 ### 1. Prepare your domain name
@@ -64,14 +70,33 @@ Don't leave the detail page and go on.
 9. Input `KV_AI_PROXY` (UPPERCASE) in the left, and choose new KV_AI_PROXY namespace created in step 4.
 10. Click "Save and deploy" button.
 
-### 6. Configure the newly created service - Code
+### 6. Configure the newly created service - Manual Deployment
 
-1. Open the [raw code of worker.js](https://raw.githubusercontent.com/janlay/openai-cloudflare/master/worker.js).
-2. Copy all of the code.
-3. Go back to the detail page of the new created service.
-4. Click "Quick edit" button at the top right.
-5. Replace all code with content of pasteboard.
-6. Click "Save and deploy".
+1. Clone this repository to your local machine.
+
+```bash
+git clone https://github.com/sctg-development/ai-proxy-cloudflare.git
+cd ai-proxy-cloudflare
+```
+
+2. Install npm dependencies.
+
+```bash
+npm install
+```
+
+3. Build the worker script.
+
+```bash
+npm run build
+```
+
+4. Open the code of the worker script in `dist/index.js` with a text editor.
+5. Copy all of the code.
+6. Go back to the detail page of the new created service.
+7. Click "Quick edit" button at the top right.
+8. Replace all code with content of pasteboard.
+9. Click "Save and deploy".
 
 Around one minute later, the new serivce should serve.
 

@@ -6,6 +6,7 @@
     "author": "Ronan LE MEILLAT",
     "license": "MIT",
     "scripts": {
+        "build": "tsc",
         "deploy": "wrangler deploy",
         "dev": "wrangler dev",
         "start": "wrangler dev",
