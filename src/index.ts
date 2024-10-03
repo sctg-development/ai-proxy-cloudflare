@@ -58,6 +58,9 @@ async function proxy(request: Request, env: Env): Promise<Response> {
   // 4. replace with the real API key
   headers.set(authKey, `Bearer ${apiKey}`);
 
+  // 5. Delete the X-Host-Final header
+  headers.delete("X-Host-Final");
+
   // Force to use https on port 443
   if (url.protocol !== "https:") {
     url.protocol = "https:";
@@ -69,13 +72,15 @@ async function proxy(request: Request, env: Env): Promise<Response> {
   }
 
   console.log(`Proxying request to ${url.toString()} with key ${apiKey}`);
-  // 5. issue the underlying request
+
+  // 6. issue the underlying request
   // Only pass body if request method is not 'GET'
   const requestBody =
     request.method !== "GET" ? JSON.stringify(await request.json()) : null;
+
   return fetch(url.toString(), {
     method: request.method,
-    headers: { ...headers },
+    headers: headers,
     body: requestBody,
   });
 }
@@ -124,7 +129,8 @@ function generateAPIKey(): string {
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, _ctx: any): Promise<Response> {
+    console.log(`request: ${request.headers}`);
     return handleRequest(request, env).catch(
       (err) => new Response(err || "Unknown reason", { status: 403 })
     );

@@ -74,7 +74,7 @@ Don't leave the detail page and go on.
 
 Around one minute later, the new serivce should serve.
 
-## Manage
+## Manage users
 
 Here assume your domain name is `gpt.mydomainname.com` and the Admin's password (`ACCESS_TOKEN`) is `Une9f2ijwe`
 
@@ -92,6 +92,16 @@ curl -X DELETE https://gpt.mydomainname.com/Une9f2ijwe/janlay
 ```
 
 It's ok if you see "OK".
+
+## Manage host/key pairs
+
+You can use the proxy for proxying to multiple AI providers using OpenAI's API format.  
+The client must add `X-Host-Final` header to the request to specify the target host.  
+You can add host/key pairs by the following command:
+
+```bash
+curl https://gpt.mydomainname.com/Une9f2ijwe/addkey/host/key'
+```
 
 ## Use the service
 
