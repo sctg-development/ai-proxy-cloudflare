@@ -2,34 +2,63 @@
 // Original author: Janlay Wu https://github.com/janlay published under MIT License
 // Modified by: Ronan LE MEILLAT
 
+/**
+ * Handles administrative actions such as deleting users, adding API keys, and registering users.
+ * @param action - The action to perform.
+ * @param params - The parameters for the action.
+ * @param method - The HTTP method of the request.
+ * @param env - The environment object containing configuration and KV namespace.
+ * @returns - A Promise that resolves to a Response object.
+ */
+async function handleAdminAction(action: string, params: string[], method: string, env: Env): Promise<Response> {
+  let result: string;
+  switch (action) {
+    case 'delete':
+      if (method !== 'DELETE') throw new Error("Method not allowed");
+      await deleteUser(params[0], env);
+      result = "User deleted successfully";
+      break;
+    case 'addkey':
+      if (method !== 'POST') throw new Error("Method not allowed");
+      await addkey(params[0], params[1], env);
+      result = "API key added successfully";
+      break;
+    case 'register':
+    case 'reset':
+      if (method !== 'POST') throw new Error("Method not allowed");
+      result = await registerUser(params[0], env);
+      break;
+    default:
+      throw new Error("Invalid action");
+  }
+  return new Response(result, { headers: { "Content-Type": "text/plain" } });
+}
+
+/**
+ * Handles incoming requests and routes them to appropriate handlers based on the URL path.
+ * @param request - The incoming request object.
+ * @param env - The environment object containing configuration and KV namespace.
+ * @returns A Promise that resolves to a Response object.
+ */
 async function handleRequest(request: Request, env: Env): Promise<Response> {
   const { pathname } = new URL(request.url);
-  const [_, token, next, ...params] = pathname.split("/");
+  const [_, token, action, ...params] = pathname.split("/");
 
-  if (/^v\d+$/.test(token)) {
+  if ( token === "openai" || (/^v\d+$/.test(token)) && token !== env.ACCESS_TOKEN) { //Openai API path starts with v1, v2, etc.
     return proxy(request, env);
   } else if (token === env.ACCESS_TOKEN) {
     console.log("Accessing master handler");
-    let result: string | undefined;
-    if (request.method === "DELETE") {
-      await deleteUser(next, env);
-      result = "ok";
-    } else if (next === "addkey") {
-      console.log(`Adding key ${params[1]} for host ${params[0]}`);
-      await addkey(params[0], params[1], env);
-      result = "ok";
-    } else if (next === "register" || next === "reset") {
-      result = await registerUser(params[0], env);
-    }
-
-    if (!result) throw "Invalid action";
-    return new Response(`${result}\n`, {
-      headers: { "Content-Type": "text/plain" },
-    });
+    return await handleAdminAction(action, params, request.method, env);
   }
   throw "Access forbidden";
 }
 
+/**
+ * Proxies the incoming request to the appropriate API endpoint.
+ * @param request - The incoming request object.
+ * @param env - The environment object containing configuration and KV namespace.
+ * @returns A Promise that resolves to a Response object from the proxied request.
+ */
 async function proxy(request: Request, env: Env): Promise<Response> {
   const headers = new Headers(request.headers);
   const authKey = "Authorization";
@@ -85,6 +114,12 @@ async function proxy(request: Request, env: Env): Promise<Response> {
   });
 }
 
+/**
+ * Registers a new user or resets an existing user's API key.
+ * @param user - The username to register or reset.
+ * @param env - The environment object containing the KV namespace.
+ * @returns A Promise that resolves to the new API key.
+ */
 async function registerUser(
   user: string | undefined,
   env: Env
@@ -99,6 +134,12 @@ async function registerUser(
   return key;
 }
 
+/**
+ * Deletes a user from the system.
+ * @param user - The username to delete.
+ * @param env - The environment object containing the KV namespace.
+ * @returns A Promise that resolves when the user is deleted.
+ */
 async function deleteUser(user: string | undefined, env: Env): Promise<void> {
   if (!user?.length) throw "Invalid username2";
 
@@ -110,11 +151,22 @@ async function deleteUser(user: string | undefined, env: Env): Promise<void> {
   await env.KV_AI_PROXY.put("users", JSON.stringify(users));
 }
 
+/**
+ * Adds an API key for a specific host.
+ * @param host - The host to associate with the API key.
+ * @param key - The API key to add.
+ * @param env - The environment object containing the KV namespace.
+ * @returns A Promise that resolves when the key is added.
+ */
 async function addkey(host: string, key: string, env: Env): Promise<void> {
   if (!host || !key) throw "Invalid host or key";
   await env.KV_AI_PROXY.put(host, key);
 }
 
+/**
+ * Generates a random API key.
+ * @returns A string representing the generated API key.
+ */
 function generateAPIKey(): string {
   const characters =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -129,6 +181,13 @@ function generateAPIKey(): string {
 }
 
 export default {
+  /**
+   * The main entry point for handling requests.
+   * @param request - The incoming request object.
+   * @param env - The environment object containing configuration and KV namespace.
+   * @param _ctx - The context object (unused in this implementation).
+   * @returns A Promise that resolves to a Response object.
+   */
   async fetch(request: Request, env: Env, _ctx: any): Promise<Response> {
     console.log(`request: ${request.headers}`);
     return handleRequest(request, env).catch(
