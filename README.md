@@ -114,7 +114,7 @@ Both of these commands output the user's Key. Please be aware that this key alwa
 If you want to delete a user, try this:
 
 ```bash
-curl -X DELETE https://ai-proxy.example.com/Une9f2ijwe/janlay
+curl -X DELETE https://ai-proxy.example.com/Une9f2ijwe/delete/janlay
 ```
 
 It's ok if you see "OK".

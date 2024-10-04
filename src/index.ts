@@ -44,6 +44,12 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
   const { pathname } = new URL(request.url);
   const [_, token, action, ...params] = pathname.split("/");
 
+  if (request.method === "OPTIONS") {
+    return new Response(null, {
+      status: 204,
+      headers: getCorsHeaders(request.headers.get("Origin"))
+    });
+  }
   if ( token === "openai" || (/^v\d+$/.test(token)) && token !== env.ACCESS_TOKEN) { //Openai API path starts with v1, v2, etc.
     return proxy(request, env);
   } else if (token === env.ACCESS_TOKEN) {
@@ -107,11 +113,14 @@ async function proxy(request: Request, env: Env): Promise<Response> {
   const requestBody =
     request.method !== "GET" ? JSON.stringify(await request.json()) : null;
 
-  return fetch(url.toString(), {
+  const response = await fetch(url.toString(), {
     method: request.method,
     headers: headers,
     body: requestBody,
   });
+  let corsHeaders = getCorsHeaders(request.headers.get("Origin"));
+  response.headers.forEach((value, key) => corsHeaders.set(key, value));
+  return new Response(await response.text(), {headers: corsHeaders});
 }
 
 /**
@@ -194,4 +203,27 @@ export default {
       (err) => new Response(err || "Unknown reason", { status: 403 })
     );
   },
+};
+
+/**
+ * Cosntruct a minimal set of CORS headers
+ * @param origin CORS origin
+ * @returns a set of required
+ */
+export const getCorsHeaders = (
+  origin: string | null
+): Headers => {
+  const returnHeaders = new Headers();
+  returnHeaders.set("Access-Control-Allow-Origin", origin || "*");
+  returnHeaders.set("Access-Control-Allow-Credentials", "true");
+  returnHeaders.set(
+    "Access-Control-Allow-Headers",
+    "Origin, X-Requested-With, Content-Type, Content-Encoding, Accept, Authorization, X-Host-Final, x-stainless-arch, x-stainless-lang, x-stainless-os, x-stainless-package-version, x-stainless-runtime, x-stainless-runtime-version"
+  );
+  returnHeaders.set(
+    "Access-Control-Allow-Methods",
+    "OPTIONS, GET, POST, PATCH, PUT, DELETE"
+  );
+  returnHeaders.set("Via", `ai-proxy-cloudflare`);
+  return returnHeaders;
 };
