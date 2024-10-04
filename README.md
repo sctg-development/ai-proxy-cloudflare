@@ -26,7 +26,7 @@ An AI API proxy running with Cloudflare worker, supporting multiple AI providers
 ## SDK
 
 This was designed to be used with the [AI SDK](https://github.com/sctg-development/ai-typescript) project.  
-See https://github.com/sctg-development/groq-outlook for an example of how to use it. In particular, see the `src/aipane.ts` [file](https://github.com/sctg-development/groq-outlook/blob/main/src/aipane/aipane.ts).
+See [AI-Outlook project](https://github.com/sctg-development/ai-outlook) for an example of how to use it. In particular, see the `src/aipane.ts` [file](https://github.com/sctg-development/ai-outlook/blob/main/src/aipane/aipane.ts).
 
 ## Setup
 
