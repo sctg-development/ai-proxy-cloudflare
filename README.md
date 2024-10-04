@@ -106,8 +106,8 @@ Here assume your domain name is `ai-proxy.example.com` and the Admin's password 
 
 | Task  | Command |
 | ------------- | ------------- |
-| Create new user with name `janlay`  | `curl https://ai-proxy.example.com/Une9f2ijwe/register/janlay`  |
-| Reset user `janlay`'s key  | `curl https://ai-proxy.example.com/Une9f2ijwe/reset/janlay`  |
+| Create new user with name `janlay`  | `curl -X POST https://ai-proxy.example.com/Une9f2ijwe/register/janlay`  |
+| Reset user `janlay`'s key  | `curl -X POST https://ai-proxy.example.com/Une9f2ijwe/reset/janlay`  |
 
 Both of these commands output the user's Key. Please be aware that this key always starts with `sk-cfw` and may look like a valid OpenAI Key, but it can only be used for this service.
 
@@ -124,13 +124,13 @@ It's ok if you see "OK".
 You can use the proxy for multiple AI providers that use an OpenAI-compatible API format. To add support for a new provider:
 
 ```bash
-curl https://ai-proxy.example.com/Une9f2ijwe/addkey/host/key
+curl -X POST https://ai-proxy.example.com/Une9f2ijwe/addkey/host/key
 ```
 
 For example, to add support for Groq:
 
 ```bash
-curl https://ai-proxy.example.com/Une9f2ijwe/addkey/api.groq.com/gsk_your_groq_api_key_here
+curl -X POST https://ai-proxy.example.com/Une9f2ijwe/addkey/api.groq.com/gsk_your_groq_api_key_here
 ```
 
 ## Use the service
