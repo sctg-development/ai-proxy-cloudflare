@@ -11,7 +11,8 @@ An AI API proxy running with Cloudflare worker, supporting multiple AI providers
 - [x] Unique key for users
 - [x] Create / delete users
 - [x] Reset user's key
-- [x] Support for multiple AI providers (e.g., OpenAI, Groq)
+- [x] Support for multiple AI providers (e.g., OpenAI, Groq, SambaNova)
+- [x] Support for in brower fetch with CORS
 - [ ] User can reset the key independently
 - [ ] Time-limited
 - [ ] Stats for usage
