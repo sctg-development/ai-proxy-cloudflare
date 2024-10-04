@@ -22,6 +22,11 @@ An AI API proxy running with Cloudflare worker, supporting multiple AI providers
 2. Install npm dependencies.
 3. Deploy the worker script to Cloudflare. with `npm run deploy`.  
 
+## SDK
+
+This was designed to be used with the [AI SDK](https://github.com/sctg-development/ai-typescript) project.  
+See https://github.com/sctg-development/groq-outlook for an example of how to use it. In particular, see the `src/aipane.ts` [file](https://github.com/sctg-development/groq-outlook/blob/main/src/aipane/aipane.ts).
+
 ## Setup
 
 ### 1. Prepare your domain name
