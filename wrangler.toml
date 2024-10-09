@@ -23,6 +23,7 @@ enabled = true
 # Note: Use secrets to store sensitive data.
 # - https://developers.cloudflare.com/workers/configuration/secrets/
 [vars]
+ORIGIN_URL = "https://api.openai.com"
 ACCESS_TOKEN = "random_production_value"
 OPENAPI_API_KEY = "random"
 
@@ -113,3 +114,16 @@ id = "0f6936bc4d9b4d5fa1cc85acd757e354"
 # [[vectorize]]
 # binding = "MY_INDEX"
 # index_name = "my-index"
+
+[[unsafe.bindings]]
+name = "PROXY_RATE_LIMITER"
+type = "ratelimit"
+# An identifier you define, that is unique to your Cloudflare account.
+# Must be an integer.
+namespace_id = "1001"
+
+# Limit: the number of tokens allowed within a given period in a single
+# Cloudflare location
+# Period: the duration of the period, in seconds. Must be either 10 or 60
+simple = { limit = 10, period = 60 }
+

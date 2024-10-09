@@ -44,19 +44,40 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
   const { pathname } = new URL(request.url);
   const [_, token, action, ...params] = pathname.split("/");
 
+  // Validate the request headers
+  if (!request.headers.get('Authorization')) {
+    throw new Error('Authorization header is missing');
+  }
+
+  // Validate the API key
+  const apiKey = request.headers.get('Authorization');
+  if (!validateAPIKey(apiKey || '')) { // Note '' is not a valid API key
+    throw new Error('Invalid API key');
+  }
+
   if (request.method === "OPTIONS") {
     return new Response(null, {
       status: 204,
       headers: getCorsHeaders(request.headers.get("Origin"))
     });
   }
-  if ( token === "openai" || (/^v\d+$/.test(token)) && token !== env.ACCESS_TOKEN) { //Openai API path starts with v1, v2, etc.
+
+  // Validate the request method
+  if (request.method !== 'POST' && request.method !== 'GET') {
+    throw new Error('Invalid request method');
+  }
+
+  if (token === "openai" || (/^v\d+$/.test(token)) && token !== env.ACCESS_TOKEN) { //Openai API path starts with v1, v2, etc.
+    const host = request.headers.get('X-Host-Final');
+    if (!host) {
+      throw new Error('X-Host-Final header is missing');
+    }
     return proxy(request, env);
   } else if (token === env.ACCESS_TOKEN) {
     console.log("Accessing master handler");
     return await handleAdminAction(action, params, request.method, env);
   }
-  throw "Access forbidden";
+  throw new Error("Access forbidden");
 }
 
 /**
@@ -118,9 +139,9 @@ async function proxy(request: Request, env: Env): Promise<Response> {
     headers: headers,
     body: requestBody,
   });
-  let corsHeaders = getCorsHeaders(request.headers.get("Origin"));
+  let corsHeaders = getCorsHeaders(request.headers.get("Origin") || env.ORIGIN_URL);
   response.headers.forEach((value, key) => corsHeaders.set(key, value));
-  return new Response(await response.text(), {headers: corsHeaders});
+  return new Response(await response.text(), { headers: corsHeaders });
 }
 
 /**
@@ -189,6 +210,32 @@ function generateAPIKey(): string {
   return apiKey;
 }
 
+/**
+ * Define a function to validate the username
+ * @param username - The username to validate
+ * @returns true if the username is valid
+ */
+function validateUsername(username: string) {
+  const usernameRegex = /^[a-zA-Z0-9_]{3,20}$/;
+  if (!usernameRegex.test(username)) {
+    throw new Error('Invalid username');
+  }
+  return true;
+}
+
+/**
+ * Define a function to validate the API key
+ * @param apiKey the API key to validate
+ * @returns true if the API key is valid
+ */
+function validateAPIKey(apiKey: string) {
+  const apiKeyRegex = /^[a-zA-Z0-9_]{3,45}$/;
+  if (!apiKeyRegex.test(apiKey)) {
+    throw new Error('Invalid API key');
+  }
+  return true;
+}
+
 export default {
   /**
    * The main entry point for handling requests.
@@ -199,6 +246,11 @@ export default {
    */
   async fetch(request: Request, env: Env, _ctx: any): Promise<Response> {
     console.log(`request: ${request.headers}`);
+    const { success } = await env.PROXY_RATE_LIMITER.limit({ key: "aipane" }) // key can be any string of your choosing
+    if (!success) {
+      return new Response(`429 Failure – rate limit exceeded for aipane`, { status: 429 })
+    }
+
     return handleRequest(request, env).catch(
       (err) => new Response(err || "Unknown reason", { status: 403 })
     );
@@ -218,7 +270,7 @@ export const getCorsHeaders = (
   returnHeaders.set("Access-Control-Allow-Credentials", "true");
   returnHeaders.set(
     "Access-Control-Allow-Headers",
-    "Origin, X-Requested-With, Content-Type, Content-Encoding, Accept, Authorization, X-Host-Final, x-stainless-arch, x-stainless-lang, x-stainless-os, x-stainless-package-version, x-stainless-runtime, x-stainless-runtime-version"
+    "Origin, X-Requested-With, Content-Type, Content-Encoding, Accept, Authorization, X-Host-Final, x-stainless-arch, x-stainless-lang, x-stainless-os, x-stainless-package-version, x-stainless-runtime, x-stainless-runtime-version, User-Agent"
   );
   returnHeaders.set(
     "Access-Control-Allow-Methods",

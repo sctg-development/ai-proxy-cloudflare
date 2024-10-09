@@ -2,6 +2,8 @@
 
 interface Env {
 	KV_AI_PROXY: KVNamespace;
+	ORIGIN_URL: "https://api.openai.com";
 	ACCESS_TOKEN: "random_production_value";
 	OPENAPI_API_KEY: "random";
+	PROXY_RATE_LIMITER: RateLimit;
 }
