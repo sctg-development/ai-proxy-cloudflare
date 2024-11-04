@@ -59,7 +59,7 @@ Don't leave the detail page and go on.
 2. Click "Variables" from the right part.
 3. In "Environment Variables", Click "Add Variable" button.
 4. Input two important items. **Enable "Encrypt" because they are sensitive**.
-   - Key: `OPENAPI_API_KEY`, value is your own OpenAPI key.
+   - Key: `GROQ_API_KEY`, value is your own Groq key.
    - Key `ACCESS_TOKEN`, value is any random string like a password.
    Again, both of these pieces of information are very sensitive, so it is strongly recommended to turn on the "Encrypt" option. This way, after you save them, no one will be able to see their values again.
 
