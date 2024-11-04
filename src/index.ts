@@ -10,22 +10,27 @@
  * @param env - The environment object containing configuration and KV namespace.
  * @returns - A Promise that resolves to a Response object.
  */
-async function handleAdminAction(action: string, params: string[], method: string, env: Env): Promise<Response> {
+async function handleAdminAction(
+  action: string,
+  params: string[],
+  method: string,
+  env: Env
+): Promise<Response> {
   let result: string;
   switch (action) {
-    case 'delete':
-      if (method !== 'DELETE') throw new Error("Method not allowed");
+    case "delete":
+      if (method !== "DELETE") throw new Error("Method not allowed");
       await deleteUser(params[0], env);
       result = "User deleted successfully";
       break;
-    case 'addkey':
-      if (method !== 'POST') throw new Error("Method not allowed");
+    case "addkey":
+      if (method !== "POST") throw new Error("Method not allowed");
       await addkey(params[0], params[1], env);
       result = "API key added successfully";
       break;
-    case 'register':
-    case 'reset':
-      if (method !== 'POST') throw new Error("Method not allowed");
+    case "register":
+    case "reset":
+      if (method !== "POST") throw new Error("Method not allowed");
       result = await registerUser(params[0], env);
       break;
     default:
@@ -44,39 +49,49 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
   const { pathname } = new URL(request.url);
   const [_, token, action, ...params] = pathname.split("/");
 
-  // Validate the request headers
-  if (!request.headers.get('Authorization')) {
-    throw new Error('Authorization header is missing');
-  }
-
-  // Validate the API key
-  const apiKey = request.headers.get('Authorization');
-  if (!validateAPIKey(apiKey || '')) { // Note '' is not a valid API key
-    throw new Error('Invalid API key');
-  }
-
   if (request.method === "OPTIONS") {
     return new Response(null, {
       status: 204,
-      headers: getCorsHeaders(request.headers.get("Origin"))
+      headers: getCorsHeaders(request.headers.get("Origin")),
     });
   }
 
-  // Validate the request method
-  if (request.method !== 'POST' && request.method !== 'GET') {
-    throw new Error('Invalid request method');
+  // Validate the request headers
+  if (!request.headers.get("Authorization")) {
+    console.log("Error: Authorization header is missing");
+    throw new Error("Authorization header is missing");
   }
 
-  if (token === "openai" || (/^v\d+$/.test(token)) && token !== env.ACCESS_TOKEN) { //Openai API path starts with v1, v2, etc.
-    const host = request.headers.get('X-Host-Final');
+  // Validate the API key
+  const apiKey = request.headers.get("Authorization");
+  if (!validateAPIKey(apiKey || "")) {
+    // Note '' is not a valid API key
+    console.log(`Error: Invalid API key: ${apiKey}`);
+    throw new Error(`Invalid API key: ${apiKey}`);
+  }
+
+  // Validate the request method
+  if (request.method !== "POST" && request.method !== "GET") {
+    console.log("Error: Invalid request method");
+    throw new Error("Invalid request method");
+  }
+
+  if (
+    token === "openai" ||
+    (/^v\d+$/.test(token) && token !== env.ACCESS_TOKEN)
+  ) {
+    //Openai API path starts with v1, v2, etc.
+    const host = request.headers.get("X-Host-Final");
     if (!host) {
-      throw new Error('X-Host-Final header is missing');
+      console.log("Error: X-Host-Final header is missing");
+      throw new Error("X-Host-Final header is missing");
     }
     return proxy(request, env);
   } else if (token === env.ACCESS_TOKEN) {
     console.log("Accessing master handler");
     return await handleAdminAction(action, params, request.method, env);
   }
+  console.log("Error: Access forbidden");
   throw new Error("Access forbidden");
 }
 
@@ -139,7 +154,9 @@ async function proxy(request: Request, env: Env): Promise<Response> {
     headers: headers,
     body: requestBody,
   });
-  let corsHeaders = getCorsHeaders(request.headers.get("Origin") || env.ORIGIN_URL);
+  let corsHeaders = getCorsHeaders(
+    request.headers.get("Origin") || env.ORIGIN_URL
+  );
   response.headers.forEach((value, key) => corsHeaders.set(key, value));
   return new Response(await response.text(), { headers: corsHeaders });
 }
@@ -218,7 +235,7 @@ function generateAPIKey(): string {
 function validateUsername(username: string) {
   const usernameRegex = /^[a-zA-Z0-9_]{3,20}$/;
   if (!usernameRegex.test(username)) {
-    throw new Error('Invalid username');
+    throw new Error("Invalid username");
   }
   return true;
 }
@@ -229,9 +246,9 @@ function validateUsername(username: string) {
  * @returns true if the API key is valid
  */
 function validateAPIKey(apiKey: string) {
-  const apiKeyRegex = /^[a-zA-Z0-9_]{3,45}$/;
+  const apiKeyRegex = /^Bearer [a-zA-Z0-9_-]{3,100}$/;
   if (!apiKeyRegex.test(apiKey)) {
-    throw new Error('Invalid API key');
+    throw new Error(`Invalid API key format: ${apiKey}`);
   }
   return true;
 }
@@ -245,14 +262,20 @@ export default {
    * @returns A Promise that resolves to a Response object.
    */
   async fetch(request: Request, env: Env, _ctx: any): Promise<Response> {
-    console.log(`request: ${request.headers}`);
-    const { success } = await env.PROXY_RATE_LIMITER.limit({ key: "aipane" }) // key can be any string of your choosing
+    console.log(`request: ${JSON.stringify(request.headers, null, 2)}`);
+    const { success } = await env.PROXY_RATE_LIMITER.limit({ key: "aipane" }); // key can be any string of your choosing
     if (!success) {
-      return new Response(`429 Failure – rate limit exceeded for aipane`, { status: 429 })
+      return new Response(`429 Failure – rate limit exceeded for aipane`, {
+        status: 429,
+      });
     }
 
     return handleRequest(request, env).catch(
-      (err) => new Response(err || "Unknown reason", { status: 403 })
+      (err) =>
+        new Response(err || "Unknown reason", {
+          status: 403,
+          headers: { "X-Error": `${err || "Unknown reason"}` },
+        })
     );
   },
 };
@@ -262,9 +285,7 @@ export default {
  * @param origin CORS origin
  * @returns a set of required
  */
-export const getCorsHeaders = (
-  origin: string | null
-): Headers => {
+export const getCorsHeaders = (origin: string | null): Headers => {
   const returnHeaders = new Headers();
   returnHeaders.set("Access-Control-Allow-Origin", origin || "*");
   returnHeaders.set("Access-Control-Allow-Credentials", "true");
