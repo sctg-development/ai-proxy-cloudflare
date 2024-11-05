@@ -8,7 +8,9 @@
     "scripts": {
         "build": "tsc",
         "deploy": "wrangler deploy",
+        "_deploy": "wrangler -c .wrangler.toml deploy",
         "dev": "wrangler dev",
+        "_dev": "wrangler -c .wrangler.toml dev",
         "start": "wrangler dev",
         "test": "vitest",
         "cf-typegen": "wrangler types"

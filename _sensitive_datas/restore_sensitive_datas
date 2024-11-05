@@ -1,0 +1,13 @@
+#!/bin/sh
+echo "If you restore for a cloned repo you may declare a PROJECT_ROOT environment variable before running this"
+read -p "Press any key to continue... " -n1 -s
+cd $PROJECT_ROOT
+#1-decrypt
+openssl aes-256-cbc -a -d -md sha256 -in _sensitive_datas/_sensitive_datas.tar.xz.enc -out _sensitive_datas/_sensitive_datas.tar.xz
+#2-show content
+echo "++++++++++++++++++++++++++++++++++++++++++++++++++"
+echo "_sensitive_datas/_sensitive_datas.tar.xz contains:"
+tar -tvJf _sensitive_datas/_sensitive_datas.tar.xz
+#3 show help
+echo "if you want to restore enter:"
+echo "cd $PROJECT_ROOT && tar -xvJf _sensitive_datas/_sensitive_datas.tar.xz"
