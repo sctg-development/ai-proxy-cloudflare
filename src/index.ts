@@ -72,7 +72,7 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
   }
 
   // Validate the request method
-  if (request.method !== "POST" && request.method !== "GET") {
+  if (request.method !== "POST" && request.method !== "GET" && request.method !== "DELETE") {
     console.log("Error: Invalid request method");
     throw new Error("Invalid request method");
   }
