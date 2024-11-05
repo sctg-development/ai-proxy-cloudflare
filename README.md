@@ -12,6 +12,7 @@ An AI API proxy running with Cloudflare worker, supporting multiple AI providers
 - [x] Create / delete users
 - [x] Reset user's key
 - [x] Support for multiple AI providers (e.g., OpenAI, Groq, SambaNova)
+- [x] Support for multiple keys for the same provider
 - [x] Support for in browser fetch with CORS
 - [ ] User can reset the key independently
 - [ ] Time-limited
@@ -136,7 +137,7 @@ curl -H "Authorization: Bearer admin" -X POST https://ai-proxy.example.com/Une9f
 For example, to add support for Groq:
 
 ```bash
-curl -X POST https://ai-proxy.example.com/Une9f2ijwe/addkey/api.groq.com/gsk_your_groq_api_key_here
+curl -H "Authorization: Bearer admin" -X POST https://ai-proxy.example.com/Une9f2ijwe/addkey/api.groq.com/gsk_your_groq_api_key_here
 ```
 
 ## Use the service
@@ -185,16 +186,18 @@ curl https://ai-proxy.example.com/v1/chat/completions \
 
 ### Groq
 
+This sample handles the response with `brotli` decompression.
+
 ```bash
 curl https://ai-proxy.example.com/openai/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer sk-cfw****" \
   -H "X-Host-Final: api.groq.com" \
   -d '{
-    "model": "mixtral-8x7b-32768",
+    "model": "llama-3.2-90b-text-preview",
     "messages": [{"role": "user", "content": "Say this is a test"}],
     "temperature": 0.7
-  }'
+  }' --output - | brotli -d
 ```
 
 Note: Make sure to replace `sk-cfw****` with your actual user key, and use the appropriate model for each provider.

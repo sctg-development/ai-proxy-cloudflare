@@ -25,6 +25,7 @@ async function handleAdminAction(
       break;
     case "addkey":
       if (method !== "POST") throw new Error("Method not allowed");
+      // params[0] is the host, params[1] is the key
       await addkey(params[0], params[1], env);
       result = "API key added successfully";
       break;
@@ -64,7 +65,7 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
 
   // Validate the API key
   const apiKey = request.headers.get("Authorization");
-  if (!validateAPIKey(apiKey || "")) {
+  if (!validateBearerAPIKey(apiKey || "")) {
     // Note '' is not a valid API key
     console.log(`Error: Invalid API key: ${apiKey}`);
     throw new Error(`Invalid API key: ${apiKey}`);
@@ -123,7 +124,7 @@ async function proxy(request: Request, env: Env): Promise<Response> {
   // 2. replace url.host whit the host from the X-Host-Final header or 'api.openai.com' if not present
   url.host = host || "api.openai.com";
   // 3. Check if an API ley is present in the KV for this host
-  const apiKey = await env.KV_AI_PROXY.get(host || env.OPENAPI_API_KEY);
+  const apiKey = await getAPIKey(host || "api.openai.com", env);
 
   console.log(`API key for host ${host} is ${apiKey}`);
   // 4. replace with the real API key
@@ -200,6 +201,10 @@ async function deleteUser(user: string | undefined, env: Env): Promise<void> {
 
 /**
  * Adds an API key for a specific host.
+ * 1- retrieve the existing keys
+ * 2- if the key already exists it can be a simple string or a json string representing an array of keys
+ * 3- if the key is a string, convert it to a json string representing an array of keys
+ * 4- add the new key to the array only if it does not already exist
  * @param host - The host to associate with the API key.
  * @param key - The API key to add.
  * @param env - The environment object containing the KV namespace.
@@ -207,7 +212,31 @@ async function deleteUser(user: string | undefined, env: Env): Promise<void> {
  */
 async function addkey(host: string, key: string, env: Env): Promise<void> {
   if (!host || !key) throw "Invalid host or key";
-  await env.KV_AI_PROXY.put(host, key);
+  {
+    let keys: string[] = [];
+    const existingKeys = await env.KV_AI_PROXY.get(host);
+    if (existingKeys) {
+      keys = JSON.parse(existingKeys);
+      if (!Array.isArray(keys)) keys = [keys];
+    }
+    if (keys.includes(key)) throw "Key already exists";
+    keys.push(key);
+    await env.KV_AI_PROXY.put(host, JSON.stringify(keys));
+  }
+}
+
+/**
+ * Retrieves a random API key for a specific host.
+ * @param host - The host to retrieve the API key for.
+ * @param env - The environment object containing the KV namespace.
+ * @returns A Promise that resolves to the API key.
+ */
+async function getAPIKey(host: string, env: Env): Promise<string> {
+  if (!host) throw "Invalid host";
+  const keys = await env.KV_AI_PROXY.get(host);
+  if (!keys) throw `No API key found for host ${host}`;
+  const keyArray = JSON.parse(keys);
+  return keyArray[Math.floor(Math.random() * keyArray.length)];
 }
 
 /**
@@ -241,14 +270,14 @@ function validateUsername(username: string) {
 }
 
 /**
- * Define a function to validate the API key
- * @param apiKey the API key to validate
+ * Define a function to validate the Bearer header containing the API key
+ * @param bearerToken the API key to validate (with the Bearer prefix)
  * @returns true if the API key is valid
  */
-function validateAPIKey(apiKey: string) {
+function validateBearerAPIKey(bearerToken: string) {
   const apiKeyRegex = /^Bearer [a-zA-Z0-9_-]{3,100}$/;
-  if (!apiKeyRegex.test(apiKey)) {
-    throw new Error(`Invalid API key format: ${apiKey}`);
+  if (!apiKeyRegex.test(bearerToken)) {
+    throw new Error(`Invalid API key format: ${bearerToken}`);
   }
   return true;
 }
