@@ -216,7 +216,12 @@ async function addkey(host: string, key: string, env: Env): Promise<void> {
     let keys: string[] = [];
     const existingKeys = await env.KV_AI_PROXY.get(host);
     if (existingKeys) {
-      keys = JSON.parse(existingKeys);
+      try {
+        keys = JSON.parse(existingKeys);
+      }
+      catch (e) {
+        keys = [existingKeys];
+      }
       if (!Array.isArray(keys)) keys = [keys];
     }
     if (keys.includes(key)) throw "Key already exists";
