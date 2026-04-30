@@ -1,25 +1,25 @@
 {
-    "name": "ai-proxy-cloudflare",
-    "version": "1.0.0",
-    "description": "AI Proxy Cloudflare Worker",
-    "main": "dist/worker.js",
-    "author": "Ronan LE MEILLAT",
-    "license": "MIT",
-    "scripts": {
-        "build": "tsc",
-        "deploy": "wrangler deploy",
-        "_deploy": "wrangler -c .wrangler.toml deploy",
-        "dev": "wrangler dev",
-        "_dev": "wrangler -c .wrangler.toml dev",
-        "start": "wrangler dev",
-        "test": "vitest",
-        "cf-typegen": "wrangler types"
-      },
-      "devDependencies": {
-        "@cloudflare/vitest-pool-workers": "^0.15.1",
-        "@cloudflare/workers-types": "^4.20260430.1",
-        "typescript": "^6.0.3",
-        "vitest": "4.1.5",
-        "wrangler": "^4.86.0"
-      }
+  "name": "ai-proxy-cloudflare",
+  "version": "2.0.0",
+  "description": "AI Proxy Cloudflare Worker — routes requests through Cloudflare AI Gateway with ai.json.enc decryption",
+  "type": "module",
+  "author": "Ronan LE MEILLAT",
+  "license": "AGPL-3.0-or-later",
+  "scripts": {
+    "dev": "wrangler dev --port 8787",
+    "deploy": "wrangler deploy",
+    "build": "wrangler deploy --dry-run",
+    "test": "vitest",
+    "typegen": "wrangler types"
+  },
+  "dependencies": {
+    "hono": "^4.7.1"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.15.2",
+    "@cloudflare/workers-types": "^4.20260430.1",
+    "typescript": "^6.0.3",
+    "vitest": "4.1.5",
+    "wrangler": "^4.87.0"
+  }
 }

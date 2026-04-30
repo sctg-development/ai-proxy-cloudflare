@@ -172,4 +172,8 @@ dist
 .wrangler/
 .DS_Store
 .wrangler.toml
+sample_request.sh
 .vscode/
+ai.json
+sample_forwarded_request.sh
+users.json

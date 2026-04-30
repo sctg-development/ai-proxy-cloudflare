@@ -64,7 +64,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FILES_TO_BACKUP=(
     ".env"                                           # Environment variables
     ".wrangler"                               # GitHub copilot prompts
-    ".vscoden"
+    ".vscode"
+    ".dev.vars"
 )
 
 # .env file is located one level from this script

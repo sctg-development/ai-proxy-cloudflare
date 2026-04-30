@@ -1,0 +1,42 @@
+// Cloudflare Workers configuration for AI Proxy
+// Generated: 2026-04-30
+{
+    "$schema": "https://developers.cloudflare.com/workers/wrangler/schema/wrangler-2.0.0-rc.5.json",
+    "name": "ai-proxy-cloudflare",
+    "main": "src/index.ts",
+    "compatibility_date": "2024-12-13",
+    "compatibility_flags": [
+        "nodejs_compat"
+    ],
+    // ── Environment variables (plaintext) ──────────────────────────────────
+    "vars": {
+        "DEBUG": "false"
+    },
+    // ── Secrets (loaded from .dev.vars or Wrangler secrets) ────────────────
+    // Set via: wrangler secret put CLOUDFLARE_ACCOUNT_ID
+    //          wrangler secret put AI_JSON_CRYPTOKEN
+    //          wrangler secret put CLOUDFLARE_AIG_TOKEN
+    // ── KV Namespace binding ───────────────────────────────────────────────
+    "kv_namespaces": [
+        {
+            "binding": "KV_AI_PROXY",
+            "id": "0f6936bc4d9b4d5fa1cc85acd757e354"
+        }
+    ],
+    // ── Rate limiting via Durable Objects ──────────────────────────────────
+    "rate_limits": [
+        {
+            "name": "PROXY_RATE_LIMITER",
+            "type": "ratelimit",
+            "namespace_id": 1001,
+            "simple": {
+                "limit": 10,
+                "period": 60
+            }
+        }
+    ],
+    // ── Observability ─────────────────────────────────────────────────────
+    "observability": {
+        "enabled": true
+    }
+}

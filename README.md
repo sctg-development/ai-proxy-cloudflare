@@ -1,207 +1,298 @@
-# ai-proxy-cloudflare
+# AI Proxy Cloudflare Worker v2.0
 
-An AI API proxy running with Cloudflare worker, supporting multiple AI providers.
+Proxy moderne pour router des requêtes API à travers la **Cloudflare AI Gateway**.
 
-## Features
+## 🚀 Fonctionnalités
 
-- [x] Support APIs provided by OpenAI and other compatible providers
-- [x] Fully compliant with the format requirements of OpenAI's API payload and key
-- [x] Works with mainstream OpenAI/ChatGPT GUI apps
-- [x] Streaming content
-- [x] Unique key for users
-- [x] Create / delete users
-- [x] Reset user's key
-- [x] Support for multiple AI providers (e.g., OpenAI, Groq, SambaNova)
-- [x] Support for multiple keys for the same provider
-- [x] Support for in browser fetch with CORS
-- [ ] User can reset the key independently
-- [ ] Time-limited
-- [ ] Stats for usage
+- ✅ **Décryptage on-the-fly** de `ai.json.enc` au démarrage du worker (embarqué dans le bundle)
+- ✅ **Validation des utilisateurs** via clés stockées dans KV (`users` key)
+- ✅ **Routage multi-provider** (Groq, SambaNova, Anthropic, OpenAI, Gemini)
+- ✅ **Compatibilité ascendante** avec les deux formats de requête legacy
+- ✅ **Forwarding via Cloudflare AI Gateway** avec préfixage automatique des model IDs
+- ✅ **Rate limiting** optionnel via Durable Objects
+- ✅ **CORS** pré-configuré
+- ✅ **Streaming** support transparent
+- ✅ **Build automation** — `ai.json.enc` convertit automatiquement en TypeScript
 
-## TL;DR
+## 📋 Configuration requise
 
-1. Clone this repository to your local machine.
-2. Install npm dependencies.
-3. Deploy the worker script to Cloudflare. with `npm run deploy`.  
-
-## SDK
-
-This was designed to be used with the [AI SDK](https://github.com/sctg-development/ai-typescript) project.  
-See [AI-Outlook project](https://github.com/sctg-development/ai-outlook) for an example of how to use it. In particular, see the `src/aipane.ts` [file](https://github.com/sctg-development/ai-outlook/blob/main/src/aipane/aipane.ts).
-
-## Setup
-
-### 1. Prepare your domain name
-
-- Please make sure that the nameservers of your domain is set to the nameservers provided by Cloudflare first. [Manual](https://developers.cloudflare.com/dns/zone-setups/full-setup/setup/)
-
-### 2. Create a new service
-
-1. Log in to your [Cloudflare Dashboard](https://dash.cloudflare.com/) and navigate to the Workers section.
-2. Click on the "Create a Service" button.
-3. Input the Service name.
-4. Keep the "Select a starter" as "Default handler".
-5. Click on the "Create" button
-
-Now you have the new service created and it shows you the detail of the service.
-
-### 3. Configure the newly created service - Trigger
-
-1. Click "Triggers" on the tab bar.
-2. Click "Add Custom Domain" button.
-3. Input the domain you want to use, such as `gpt.mydomainname.com`. Don't worry, Cloudflare can automatically configure the proper DNS settings for this.
-4. Click "Add Custom Domain" button to finish the Triggers setting.
-
-Don't leave the detail page and go on.
-
-### 4. Configure the newly created service - Environment Variables
-
-1. Click "Settings" on the tab bar.
-2. Click "Variables" from the right part.
-3. In "Environment Variables", Click "Add Variable" button.
-4. Input two important items. **Enable "Encrypt" because they are sensitive**.
-   - Key: `GROQ_API_KEY`, value is your own Groq key.
-   - Key `ACCESS_TOKEN`, value is any random string like a password.
-   Again, both of these pieces of information are very sensitive, so it is strongly recommended to turn on the "Encrypt" option. This way, after you save them, no one will be able to see their values again.
-
-### 5. Configure the newly created service - KV_AI_PROXY Storage
-
-1. Expand "Workers" in right sidebar.
-2. Click "KV_AI_PROXY".
-3. In "Workers KV_AI_PROXY", Click "Create a namespace" button.
-4. Input new name for the namespace, such as `namespace_gpt`.
-5. Click "Add" button.
-6. Go back to the detail page of the new created service.
-7. Go to step 3 of above section, enter "Environment Variables" and scroll down the page.
-8. In "KV_AI_PROXY Namespace Bindings" section, Click "Add binding" button.
-9. Input `KV_AI_PROXY` (UPPERCASE) in the left, and choose new KV_AI_PROXY namespace created in step 4.
-10. Click "Save and deploy" button.
-
-### 6. Configure the newly created service - Manual Deployment
-
-1. Clone this repository to your local machine.
+### 1. Créer `.dev.vars` pour le développement
 
 ```bash
-git clone https://github.com/sctg-development/ai-proxy-cloudflare.git
-cd ai-proxy-cloudflare
+cp .dev.vars.example .dev.vars
+# Remplir les valeurs :
+# - CLOUDFLARE_ACCOUNT_ID
+# - AI_JSON_CRYPTOKEN (token de déchiffrage de ai.json.enc)
+# - CLOUDFLARE_AIG_TOKEN (token Cloudflare AI Gateway)
 ```
 
-2. Install npm dependencies.
+### 2. Préparer ai.json.enc
 
-```bash
-npm install
+Le fichier `src/config/ai.json.enc` doit être:
+- Chiffré avec `openssl enc -aes-256-cbc -a -pbkdf2 -iter 100000`
+- Utiliser le même `CRYPTOKEN` que la variable env `AI_JSON_CRYPTOKEN`
+- Contenir un JSON valide avec structure `AiConfig`:
+
+```json
+{
+  "version": 1,
+  "providers": {
+    "groq": {
+      "protocol": "openai",
+      "endpoint": "https://api.groq.com/openai/v1",
+      "gatewayEndpoint": "https://gateway.ai.cloudflare.com/v1/{account}/default/compat",
+      "gatewayModelPrefix": "groq",
+      "gatewayKey": "optional_gateway_key",
+      "keys": [
+        { "key": "gsk_xxx...", "owner": "ronan", "type": "paid" }
+      ],
+      "models": [
+        {
+          "id": "llama-3.3-70b-versatile",
+          "contextWindow": 8192,
+          "maxOutputTokens": 2048,
+          "tpmLimit": null,
+          "priority": 1,
+          "tags": ["fast", "reasoning"]
+        }
+      ]
+    },
+    "sambanova": {
+      "protocol": "openai",
+      "endpoint": "https://api.sambanova.ai/api/chat/completions",
+      "gatewayEndpoint": "https://gateway.ai.cloudflare.com/v1/{account}/default/compat",
+      "gatewayModelPrefix": "custom-sambanova",
+      "keys": [
+        { "key": "xxxxxxxxxxxxxxxxx" }
+      ],
+      "models": [
+        {
+          "id": "Meta-Llama-3.3-70B-Instruct",
+          "contextWindow": 4096,
+          "maxOutputTokens": 2048,
+          "tpmLimit": null,
+          "priority": 1
+        }
+      ]
+    }
+  }
+}
 ```
 
-3. Build the worker script.
+### 3. Initialiser KV avec les utilisateurs
+
+Charger les utilisateurs valides dans KV (`KV_AI_PROXY`), clé `users`:
 
 ```bash
-npm run build
+wrangler kv:key put users '{"ronan":{"key":"AGE-SECRET-KEY-..."},"audrey":{"key":"AGE-SECRET-KEY-..."},...}' --namespace-id=0f6936bc4d9b4d5fa1cc85acd757e354
 ```
 
-4. Open the code of the worker script in `dist/index.js` with a text editor.
-5. Copy all of the code.
-6. Go back to the detail page of the new created service.
-7. Click "Quick edit" button at the top right.
-8. Replace all code with content of pasteboard.
-9. Click "Save and deploy".
+Ou pour le développement, les clés sont lues depuis `users.json` si KV est vide.
 
-Around one minute later, the new serivce should serve.
+---
 
-## Manage users
+## 📨 Utilisation
 
-Here assume your domain name is `ai-proxy.example.com` and the Admin's password (`ACCESS_TOKEN`) is `Une9f2ijwe`
-
-| Task  | Command |
-| ------------- | ------------- |
-| Create new user with name `janlay`  | `curl -H "Authorization: Bearer admin" -X POST https://ai-proxy.example.com/Une9f2ijwe/register/janlay`  |
-| Reset user `janlay`'s key  | `curl -H "Authorization: Bearer admin" -X POST https://ai-proxy.example.com/Une9f2ijwe/reset/janlay`  |
-
-Both of these commands output the user's Key. Please be aware that this key always starts with `sk-cfw` and may look like a valid OpenAI Key, but it can only be used for this service.
-
-If you want to delete a user, try this:
+### Requête moderne (préféré)
 
 ```bash
-curl -H "Authorization: Bearer admin" -X DELETE https://ai-proxy.example.com/Une9f2ijwe/delete/janlay
-```
-
-It's ok if you see "OK".
-
-## Manage host/key pairs for different providers
-
-You can use the proxy for multiple AI providers that use an OpenAI-compatible API format. To add support for a new provider:
-
-```bash
-curl -H "Authorization: Bearer admin" -X POST https://ai-proxy.example.com/Une9f2ijwe/addkey/host/key
-```
-
-For example, to add support for Groq:
-
-```bash
-curl -H "Authorization: Bearer admin" -X POST https://ai-proxy.example.com/Une9f2ijwe/addkey/api.groq.com/gsk_your_groq_api_key_here
-```
-
-## Use the service
-
-Here's how to use the service with different providers:
-
-### OpenAI (default)
-
-- URL: `https://ai-proxy.example.com/v1/chat/completions`
-- Headers:
-  - `Authorization: Bearer sk-cfw****` (your user key from registration)
-
-### Groq
-
-- URL: `https://ai-proxy.example.com/openai/v1/chat/completions`
-- Headers:
-  - `Authorization: Bearer sk-cfw****` (your user key from registration)
-  - `X-Host-Final: api.groq.com`
-
-### Using with other providers
-
-To use with other OpenAI-compatible providers:
-
-1. Add the provider's host and API key using the `addkey` command as shown above.
-2. Use the same URL and `Authorization` header as above.
-3. Add the `X-Host-Final` header with the provider's host (e.g., `X-Host-Final: api.someotherprovider.com`).
-
-The proxy will route your request to the specified provider while using your account's API key for that provider.
-
-## Example: Using with curl
-
-Here's an example of how to use the proxy with curl for both OpenAI and Groq:
-
-### OpenAI
-
-```bash
-curl https://ai-proxy.example.com/v1/chat/completions \
+curl -X POST https://ai-proxy.inet.pp.ua/groq/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer sk-cfw****" \
+  -H "Authorization: Bearer AGE-SECRET-KEY-..." \
   -d '{
-    "model": "gpt-3.5-turbo",
-    "messages": [{"role": "user", "content": "Say this is a test"}],
-    "temperature": 0.7
+    "model": "llama-3.3-70b-versatile",
+    "messages": [{"role": "user", "content": "Bonjour!"}]
   }'
 ```
 
-### Groq
-
-This sample handles the response with `brotli` decompression.
+### Requête legacy (compatibilité)
 
 ```bash
-curl https://ai-proxy.example.com/openai/v1/chat/completions \
+curl -X POST https://ai-proxy.inet.pp.ua/openai/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer sk-cfw****" \
+  -H "Authorization: Bearer AGE-SECRET-KEY-..." \
   -H "X-Host-Final: api.groq.com" \
   -d '{
-    "model": "llama-3.2-90b-text-preview",
-    "messages": [{"role": "user", "content": "Say this is a test"}],
-    "temperature": 0.7
-  }' --output - | brotli -d
+    "model": "llama-3.3-70b-versatile",
+    "messages": [{"role": "user", "content": "..."}]
+  }'
 ```
 
-Note: Make sure to replace `sk-cfw****` with your actual user key, and use the appropriate model for each provider.
+### Routage par provider
 
-## LICENSE
+Le proxy détecte le provider via:
+1. **Préfixe de path** (priorité): `/groq/`, `/sambanova/`, `/anthropic/`, `/openai/`, `/gemini/`
+2. **Header `X-Host-Final`** (fallback): `api.groq.com`, `api.sambanova.ai`, etc.
 
-This project uses the MIT license. Please see [LICENSE](https://github.com/sctg-development/ai-proxy-cloudflare/blob/master/LICENSE) for more information.
+Si ni l'un ni l'autre ne peut être déterminé → erreur 400.
+
+---
+
+## 🔄 Flux de forwarding
+
+```
+Requête client
+    ↓
+[Validation Bearer token]
+    ↓
+[Décryptage ai.json.enc] (cached)
+    ↓
+[Détection du provider]
+    ↓
+[Sélection clé API du provider] (round-robin)
+    ↓
+[Préfixage model ID pour gateway]
+    ↓
+Cloudflare AI Gateway
+    ↓
+Provider final (Groq, SambaNova, etc.)
+```
+
+---
+
+## 🛠 Développement
+
+### Démarrer le serveur local
+
+```bash
+npm run dev
+# Écoute sur http://localhost:8787
+# Exécute automatiquement: scripts/embed-config.js → src/lib/embedded-config.ts
+```
+
+### Déployer
+
+```bash
+npm run deploy
+```
+
+### Tests
+
+```bash
+npm test
+```
+
+### Build & Embedding
+
+Le script `scripts/embed-config.js` exécute automatiquement **avant chaque build/dev**:
+1. Lit `src/config/ai.json.enc` (fichier binaire chiffré)
+2. Le convertit en string JSON
+3. Génère `src/lib/embedded-config.ts` avec le contenu
+4. Importe ce contenu dans `src/index.ts`
+5. Wrangler embarque le tout dans le worker bundle
+
+Ce processus évite d'avoir à gérer les assets fichier au runtime.
+
+Forcer la régénération:
+```bash
+node scripts/embed-config.js
+```
+
+---
+
+## 📝 Exemples sample_request.sh
+
+Le fichier `sample_request.sh` contient deux exemples fonctionnels:
+
+1. **Route `/openai/v1/chat/completions`** avec `X-Host-Final: api.groq.com`
+2. **Route `/v1/chat/completions`** avec `X-Host-Final: api.sambanova.ai`
+
+Lancer les exemples:
+
+```bash
+source .dev.vars
+./sample_request.sh
+```
+
+(Remplacer les clés par des vraies clés d'utilisateurs dans `users.json`)
+
+---
+
+## 🔐 Chiffrement ai.json.enc
+
+### Créer ai.json.enc
+
+```bash
+# 1. Créer ai.json avec la structure AiConfig
+cat > ai.json << 'EOF'
+{
+  "version": 1,
+  "providers": { ... }
+}
+EOF
+
+# 2. Chiffrer avec openssl
+CRYPTOKEN="votre_token_secret"
+openssl enc -aes-256-cbc -a -pbkdf2 -iter 100000 -salt \
+  -in ai.json -out ai.json.enc -pass pass:"$CRYPTOKEN"
+
+# 3. Copier dans src/config/
+cp ai.json.enc src/config/ai.json.enc
+
+# 4. Supprimer le fichier en clair
+rm ai.json
+```
+
+### Déchiffrer (manuel)
+
+```bash
+openssl enc -d -aes-256-cbc -a -in ai.json.enc -pass pass:"$CRYPTOKEN" -out ai.json
+```
+
+---
+
+## 📂 Structure du projet
+
+```
+ai-proxy-cloudflare/
+├── src/
+│   ├── index.ts           # Hono app principale
+│   ├── config/
+│   │   └── ai.json.enc    # Config chiffré (bundled)
+│   └── lib/
+│       ├── ai-enc.ts      # Décryptage & helpers
+│       ├── auth.ts        # Validation Bearer token
+│       └── gateway.ts     # Forwarding vers Cloudflare AI Gateway
+├── wrangler.jsonc         # Config Cloudflare Workers
+├── package.json
+├── tsconfig.json
+├── .dev.vars.example
+└── sample_request.sh
+```
+
+---
+
+## 🔑 Variables d'environnement
+
+| Var | Origine | Description |
+|-----|---------|-------------|
+| `CLOUDFLARE_ACCOUNT_ID` | .dev.vars / Wrangler secret | Votre ID compte Cloudflare |
+| `AI_JSON_CRYPTOKEN` | .dev.vars / Wrangler secret | Token de déchiffrage de ai.json.enc |
+| `CLOUDFLARE_AIG_TOKEN` | .dev.vars / Wrangler secret | Token Cloudflare AI Gateway |
+| `DEBUG` | .dev.vars (optionnel) | `true` pour logs détaillés |
+
+Pour deployer en production:
+
+```bash
+wrangler secret put CLOUDFLARE_ACCOUNT_ID
+wrangler secret put AI_JSON_CRYPTOKEN
+wrangler secret put CLOUDFLARE_AIG_TOKEN
+```
+
+---
+
+## 🧪 Tests
+
+Voir `vitest.config.mts` pour la configuration des tests.
+
+```bash
+npm test
+```
+
+---
+
+## 📜 Licence
+
+AGPL-3.0-or-later
+
+Copyright © 2024-2026 Ronan LE MEILLAT
