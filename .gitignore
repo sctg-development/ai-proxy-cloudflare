@@ -177,3 +177,4 @@ sample_request.sh
 ai.json
 sample_forwarded_request.sh
 users.json
+secrets.json

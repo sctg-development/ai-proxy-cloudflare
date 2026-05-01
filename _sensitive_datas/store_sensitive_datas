@@ -66,6 +66,8 @@ FILES_TO_BACKUP=(
     ".wrangler"                               # GitHub copilot prompts
     ".vscode"
     ".dev.vars"
+    "sample_request.sh"
+    "sample_forwarded_request.sh"
 )
 
 # .env file is located one level from this script

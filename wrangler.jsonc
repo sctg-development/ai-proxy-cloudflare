@@ -1,7 +1,5 @@
-// Cloudflare Workers configuration for AI Proxy
-// Generated: 2026-04-30
 {
-    "$schema": "https://developers.cloudflare.com/workers/wrangler/schema/wrangler-2.0.0-rc.5.json",
+    "$schema": "node_modules/wrangler/config-schema.json",
     "name": "ai-proxy-cloudflare",
     "main": "src/index.ts",
     "compatibility_date": "2024-12-13",
@@ -24,11 +22,10 @@
         }
     ],
     // ── Rate limiting via Durable Objects ──────────────────────────────────
-    "rate_limits": [
+    "ratelimits": [
         {
             "name": "PROXY_RATE_LIMITER",
-            "type": "ratelimit",
-            "namespace_id": 1001,
+            "namespace_id": "1001",
             "simple": {
                 "limit": 10,
                 "period": 60
