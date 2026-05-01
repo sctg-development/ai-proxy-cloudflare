@@ -1,37 +1,37 @@
 # AI Proxy Cloudflare Worker v2.0
 
-Proxy moderne pour router des requêtes API à travers la **Cloudflare AI Gateway**.
+Modern proxy to route API requests through the **Cloudflare AI Gateway**.
 
-## 🚀 Fonctionnalités
+## 🚀 Features
 
-- ✅ **Décryptage on-the-fly** de `ai.json.enc` au démarrage du worker (embarqué dans le bundle)
-- ✅ **Validation des utilisateurs** via clés stockées dans KV (`users` key)
-- ✅ **Routage multi-provider** (Groq, SambaNova, Anthropic, OpenAI, Gemini)
-- ✅ **Compatibilité ascendante** avec les deux formats de requête legacy
-- ✅ **Forwarding via Cloudflare AI Gateway** avec préfixage automatique des model IDs
-- ✅ **Rate limiting** optionnel via Durable Objects
-- ✅ **CORS** pré-configuré
-- ✅ **Streaming** support transparent
-- ✅ **Build automation** — `ai.json.enc` convertit automatiquement en TypeScript
+- ✅ **On-the-fly decryption** of `ai.json.enc` when the worker starts (embedded in the bundle)
+- ✅ **User validation** using keys stored in KV (`users` key)
+- ✅ **Multi-provider routing** (Groq, SambaNova, Anthropic, OpenAI, Gemini)
+- ✅ **Backward compatibility** with both legacy request formats
+- ✅ **Forwarding through Cloudflare AI Gateway** with automatic model ID prefixing
+- ✅ Optional **rate limiting** via Durable Objects
+- ✅ Preconfigured **CORS**
+- ✅ Transparent **streaming** support
+- ✅ **Build automation** — `ai.json.enc` is automatically converted to TypeScript
 
-## 📋 Configuration requise
+## 📋 Requirements
 
-### 1. Créer `.dev.vars` pour le développement
+### 1. Create `.dev.vars` for development
 
 ```bash
 cp .dev.vars.example .dev.vars
-# Remplir les valeurs :
+# Fill in the values:
 # - CLOUDFLARE_ACCOUNT_ID
-# - AI_JSON_CRYPTOKEN (token de déchiffrage de ai.json.enc)
-# - CLOUDFLARE_AIG_TOKEN (token Cloudflare AI Gateway)
+# - AI_JSON_CRYPTOKEN (decryption token for ai.json.enc)
+# - CLOUDFLARE_AIG_TOKEN (Cloudflare AI Gateway token)
 ```
 
-### 2. Préparer ai.json.enc
+### 2. Prepare ai.json.enc
 
-Le fichier `src/config/ai.json.enc` doit être:
-- Chiffré avec `openssl enc -aes-256-cbc -a -pbkdf2 -iter 100000`
-- Utiliser le même `CRYPTOKEN` que la variable env `AI_JSON_CRYPTOKEN`
-- Contenir un JSON valide avec structure `AiConfig`:
+The `src/config/ai.json.enc` file must be:
+- Encrypted with `openssl enc -aes-256-cbc -a -pbkdf2 -iter 100000`
+- Using the same `AI_JSON_CRYPTOKEN` as the `AI_JSON_CRYPTOKEN` env variable
+- Containing valid JSON with the `AiConfig` structure:
 
 ```json
 {
@@ -79,21 +79,21 @@ Le fichier `src/config/ai.json.enc` doit être:
 }
 ```
 
-### 3. Initialiser KV avec les utilisateurs
+### 3. Initialize KV with users
 
-Charger les utilisateurs valides dans KV (`KV_AI_PROXY`), clé `users`:
+Load valid users into KV (`KV_AI_PROXY`), key `users`:
 
 ```bash
 wrangler kv:key put users '{"ronan":{"key":"AGE-SECRET-KEY-..."},"audrey":{"key":"AGE-SECRET-KEY-..."},...}' --namespace-id=0f6936bc4d9b4d5fa1cc85acd757e354
 ```
 
-Ou pour le développement, les clés sont lues depuis `users.json` si KV est vide.
+For development, keys are read from `users.json` if KV is empty.
 
 ---
 
-## 📨 Utilisation
+## 📨 Usage
 
-### Requête moderne (préféré)
+### Modern request (recommended)
 
 ```bash
 curl -X POST https://ai-proxy.inet.pp.ua/groq/v1/chat/completions \
@@ -101,11 +101,11 @@ curl -X POST https://ai-proxy.inet.pp.ua/groq/v1/chat/completions \
   -H "Authorization: Bearer AGE-SECRET-KEY-..." \
   -d '{
     "model": "llama-3.3-70b-versatile",
-    "messages": [{"role": "user", "content": "Bonjour!"}]
+    "messages": [{"role": "user", "content": "Hello!"}]
   }'
 ```
 
-### Requête legacy (compatibilité)
+### Legacy request (compatibility)
 
 ```bash
 curl -X POST https://ai-proxy.inet.pp.ua/openai/v1/chat/completions \
@@ -118,49 +118,49 @@ curl -X POST https://ai-proxy.inet.pp.ua/openai/v1/chat/completions \
   }'
 ```
 
-### Routage par provider
+### Provider routing
 
-Le proxy détecte le provider via:
-1. **Préfixe de path** (priorité): `/groq/`, `/sambanova/`, `/anthropic/`, `/openai/`, `/gemini/`
-2. **Header `X-Host-Final`** (fallback): `api.groq.com`, `api.sambanova.ai`, etc.
+The proxy detects the provider using:
+1. **Path prefix** (priority): `/groq/`, `/sambanova/`, `/anthropic/`, `/openai/`, `/gemini/`
+2. **`X-Host-Final` header** (fallback): `api.groq.com`, `api.sambanova.ai`, etc.
 
-Si ni l'un ni l'autre ne peut être déterminé → erreur 400.
+If neither can be determined, a 400 error is returned.
 
 ---
 
-## 🔄 Flux de forwarding
+## 🔄 Forwarding flow
 
 ```
-Requête client
+Client request
     ↓
-[Validation Bearer token]
+[Bearer token validation]
     ↓
-[Décryptage ai.json.enc] (cached)
+[ai.json.enc decryption] (cached)
     ↓
-[Détection du provider]
+[Provider detection]
     ↓
-[Sélection clé API du provider] (round-robin)
+[Provider API key selection] (round-robin)
     ↓
-[Préfixage model ID pour gateway]
+[Model ID prefixing for gateway]
     ↓
 Cloudflare AI Gateway
     ↓
-Provider final (Groq, SambaNova, etc.)
+Final provider (Groq, SambaNova, etc.)
 ```
 
 ---
 
-## 🛠 Développement
+## 🛠 Development
 
-### Démarrer le serveur local
+### Start local server
 
 ```bash
 npm run dev
-# Écoute sur http://localhost:8787
-# Exécute automatiquement: scripts/embed-config.js → src/lib/embedded-config.ts
+# Listens on http://localhost:8787
+# Automatically runs: scripts/embed-config.js -> src/lib/embedded-config.ts
 ```
 
-### Déployer
+### Deploy
 
 ```bash
 npm run deploy
@@ -172,48 +172,48 @@ npm run deploy
 npm test
 ```
 
-### Build & Embedding
+### Build & embedding
 
-Le script `scripts/embed-config.js` exécute automatiquement **avant chaque build/dev**:
-1. Lit `src/config/ai.json.enc` (fichier binaire chiffré)
-2. Le convertit en string JSON
-3. Génère `src/lib/embedded-config.ts` avec le contenu
-4. Importe ce contenu dans `src/index.ts`
-5. Wrangler embarque le tout dans le worker bundle
+The `scripts/embed-config.js` script runs automatically **before every build/dev**:
+1. Reads `src/config/ai.json.enc` (encrypted binary file)
+2. Converts it to a JSON string
+3. Generates `src/lib/embedded-config.ts` with that content
+4. Imports that content into `src/index.ts`
+5. Wrangler embeds everything into the worker bundle
 
-Ce processus évite d'avoir à gérer les assets fichier au runtime.
+This process avoids managing file assets at runtime.
 
-Forcer la régénération:
+Force regeneration:
 ```bash
 node scripts/embed-config.js
 ```
 
 ---
 
-## 📝 Exemples sample_request.sh
+## 📝 sample_request.sh examples
 
-Le fichier `sample_request.sh` contient deux exemples fonctionnels:
+The `sample_request.sh` file contains two working examples:
 
-1. **Route `/openai/v1/chat/completions`** avec `X-Host-Final: api.groq.com`
-2. **Route `/v1/chat/completions`** avec `X-Host-Final: api.sambanova.ai`
+1. **`/openai/v1/chat/completions` route** with `X-Host-Final: api.groq.com`
+2. **`/v1/chat/completions` route** with `X-Host-Final: api.sambanova.ai`
 
-Lancer les exemples:
+Run the examples:
 
 ```bash
 source .dev.vars
 ./sample_request.sh
 ```
 
-(Remplacer les clés par des vraies clés d'utilisateurs dans `users.json`)
+(Replace keys with real user keys in `users.json`)
 
 ---
 
-## 🔐 Chiffrement ai.json.enc
+## 🔐 ai.json.enc encryption
 
-### Créer ai.json.enc
+### Create ai.json.enc
 
 ```bash
-# 1. Créer ai.json avec la structure AiConfig
+# 1. Create ai.json with the AiConfig structure
 cat > ai.json << 'EOF'
 {
   "version": 1,
@@ -221,39 +221,39 @@ cat > ai.json << 'EOF'
 }
 EOF
 
-# 2. Chiffrer avec openssl
-CRYPTOKEN="votre_token_secret"
+# 2. Encrypt with openssl
+AI_JSON_CRYPTOKEN="your_secret_token"
 openssl enc -aes-256-cbc -a -pbkdf2 -iter 100000 -salt \
-  -in ai.json -out ai.json.enc -pass pass:"$CRYPTOKEN"
+  -in ai.json -out ai.json.enc -pass pass:"$AI_JSON_CRYPTOKEN"
 
-# 3. Copier dans src/config/
+# 3. Copy to src/config/
 cp ai.json.enc src/config/ai.json.enc
 
-# 4. Supprimer le fichier en clair
+# 4. Remove plaintext file
 rm ai.json
 ```
 
-### Déchiffrer (manuel)
+### Decrypt (manual)
 
 ```bash
-openssl enc -d -aes-256-cbc -a -in ai.json.enc -pass pass:"$CRYPTOKEN" -out ai.json
+openssl enc -d -aes-256-cbc -a -in ai.json.enc -pass pass:"$AI_JSON_CRYPTOKEN" -out ai.json
 ```
 
 ---
 
-## 📂 Structure du projet
+## 📂 Project structure
 
 ```
 ai-proxy-cloudflare/
 ├── src/
-│   ├── index.ts           # Hono app principale
+│   ├── index.ts           # Main Hono app
 │   ├── config/
-│   │   └── ai.json.enc    # Config chiffré (bundled)
+│   │   └── ai.json.enc    # Encrypted config (bundled)
 │   └── lib/
-│       ├── ai-enc.ts      # Décryptage & helpers
-│       ├── auth.ts        # Validation Bearer token
-│       └── gateway.ts     # Forwarding vers Cloudflare AI Gateway
-├── wrangler.jsonc         # Config Cloudflare Workers
+│       ├── ai-enc.ts      # Decryption & helpers
+│       ├── auth.ts        # Bearer token validation
+│       └── gateway.ts     # Forwarding to Cloudflare AI Gateway
+├── wrangler.jsonc         # Cloudflare Workers config
 ├── package.json
 ├── tsconfig.json
 ├── .dev.vars.example
@@ -262,16 +262,16 @@ ai-proxy-cloudflare/
 
 ---
 
-## 🔑 Variables d'environnement
+## 🔑 Environment variables
 
-| Var | Origine | Description |
-|-----|---------|-------------|
-| `CLOUDFLARE_ACCOUNT_ID` | .dev.vars / Wrangler secret | Votre ID compte Cloudflare |
-| `AI_JSON_CRYPTOKEN` | .dev.vars / Wrangler secret | Token de déchiffrage de ai.json.enc |
-| `CLOUDFLARE_AIG_TOKEN` | .dev.vars / Wrangler secret | Token Cloudflare AI Gateway |
-| `DEBUG` | .dev.vars (optionnel) | `true` pour logs détaillés |
+| Var | Source | Description |
+|-----|--------|-------------|
+| `CLOUDFLARE_ACCOUNT_ID` | .dev.vars / Wrangler secret | Your Cloudflare account ID |
+| `AI_JSON_CRYPTOKEN` | .dev.vars / Wrangler secret | Decryption token for ai.json.enc |
+| `CLOUDFLARE_AIG_TOKEN` | .dev.vars / Wrangler secret | Cloudflare AI Gateway token |
+| `DEBUG` | .dev.vars (optional) | `true` for verbose logs |
 
-Pour deployer en production:
+To deploy in production:
 
 ```bash
 wrangler secret put CLOUDFLARE_ACCOUNT_ID
@@ -283,7 +283,7 @@ wrangler secret put CLOUDFLARE_AIG_TOKEN
 
 ## 🧪 Tests
 
-Voir `vitest.config.mts` pour la configuration des tests.
+See `vitest.config.mts` for test configuration.
 
 ```bash
 npm test
@@ -291,7 +291,7 @@ npm test
 
 ---
 
-## 📜 Licence
+## 📜 License
 
 AGPL-3.0-or-later
 
