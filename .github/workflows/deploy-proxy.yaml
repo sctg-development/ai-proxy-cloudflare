@@ -87,11 +87,10 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CRYPTOKEN: ${{ secrets.CRYPTOKEN }}
-        run: |
-          cd apps/mcp
+        run: 
           npx wrangler secret bulk < secrets.json
 
-      - name: Deploy MCP Worker
+      - name: Deploy Proxy Worker
         uses: cloudflare/wrangler-action@v3
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
