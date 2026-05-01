@@ -73,12 +73,12 @@ jobs:
           openssl enc -aes-256-cbc -d -salt -in .env.enc -out env_and_wrangler.tar.gz -iter 10000 -pass pass:"${{ secrets.CRYPTOKEN }}"
           tar -xzvf env_and_wrangler.tar.gz
           rm env_and_wrangler.tar.gz .env.enc
-          if [ ! -f apps/mcp/wrangler.jsonc ]; then
-            echo "Decrypted artifact does not contain apps/mcp/wrangler.jsonc"
+          if [ ! -f wrangler.jsonc ]; then
+            echo "Decrypted artifact does not contain wrangler.jsonc"
             exit 1
           fi
-          if [ ! -f apps/mcp/secrets.json ]; then
-            echo "Decrypted artifact does not contain apps/mcp/secrets.json"
+          if [ ! -f secrets.json ]; then
+            echo "Decrypted artifact does not contain secrets.json"
             exit 1
           fi
 
