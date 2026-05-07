@@ -56,7 +56,7 @@ interface EditTarget {
 /**
  * Main application dashboard. Shown after the user authenticates.
  *
- * Junior Dev Note: All state that needs to survive across modal opens/closes
+ * All state that needs to survive across modal opens/closes
  * (e.g. which provider we are editing) lives here, not inside the modal, so
  * it is not lost when the modal unmounts.
  */
@@ -94,7 +94,7 @@ export const Dashboard: React.FC = () => {
 
   /**
    * Saves a new config version to the Worker.
-   * Junior Dev Note: deep-clone with JSON.parse(JSON.stringify()) avoids
+   * deep-clone with JSON.parse(JSON.stringify()) avoids
    * mutating React state directly, which would cause subtle bugs.
    *
    * @param newConfig - The full updated config object.
@@ -194,7 +194,7 @@ export const Dashboard: React.FC = () => {
          * Top-level tabs. Currently only "Providers" exists but the tab bar
          * makes it easy to add an "Overview" or "Settings" tab later.
          *
-         * Junior Dev Note: selectedKey / onSelectionChange is react-aria's
+         * selectedKey / onSelectionChange is react-aria's
          * controlled pattern for tabs — same idea as controlled inputs in React.
          */}
         <Tabs
@@ -316,7 +316,7 @@ interface ProviderCardProps {
  * Card component that renders a single AI provider with its models and keys
  * in nested tabs.
  *
- * Junior Dev Note: Each ProviderCard manages its own uncontrolled tab state
+ * Each ProviderCard manages its own uncontrolled tab state
  * (react-aria defaults to the first tab), so we don't need `selectedKey` here.
  */
 const ProviderCard: React.FC<ProviderCardProps> = ({
@@ -530,7 +530,7 @@ interface ConfigModalProps {
 /**
  * Unified modal for adding and editing Providers, Models, and API Keys.
  *
- * Junior Dev Note: We use the native `FormData` API to collect form values
+ * We use the native `FormData` API to collect form values
  * instead of a form library, which keeps this component dependency-free.
  * The trade-off is that we must convert number fields manually.
  */

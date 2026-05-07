@@ -12,7 +12,7 @@ import { LogIn } from 'lucide-react';
 /**
  * Full-page login screen shown when the user is not authenticated.
  *
- * Junior Dev Note: The token is stored in sessionStorage (not localStorage),
+ * The token is stored in sessionStorage (not localStorage),
  * so it is automatically cleared when the browser tab is closed. It is never
  * sent to anything other than the Cloudflare Worker endpoint.
  */

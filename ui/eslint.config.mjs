@@ -4,7 +4,7 @@
  * Requires `typescript-eslint` (npm install -D typescript-eslint).
  * Uses the new flat config format — default in ESLint 9+.
  *
- * Junior Dev Note: Flat config replaces the old .eslintrc.* format.
+ * Flat config replaces the old .eslintrc.* format.
  * Each object in the exported array targets specific files and provides
  * settings/rules that are merged together.
  */

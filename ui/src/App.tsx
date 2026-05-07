@@ -5,7 +5,7 @@ import { Dashboard } from './components/dashboard';
 
 /**
  * Main application component.
- * Junior Dev Note: We use the isAuthenticated state from our custom hook 
+ * We use the isAuthenticated state from our custom hook 
  * to decide which screen to show.
  */
 export const App: React.FC = () => {

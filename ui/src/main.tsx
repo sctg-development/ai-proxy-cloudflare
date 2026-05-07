@@ -1,6 +1,6 @@
 /**
  * @file Application entry point.
- * Junior Dev Note: This is the first file executed when the app starts.
+ * This is the first file executed when the app starts.
  * It mounts the React app into the <div id="root"> in index.html.
  */
 

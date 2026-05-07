@@ -1,7 +1,7 @@
 /**
  * Global stylesheet.
  *
- * Junior Dev Note: HeroUI v3 ships its own CSS bundle that already includes
+ * HeroUI v3 ships its own CSS bundle that already includes
  * Tailwind CSS v4 via @import "tailwindcss". Importing this single file is
  * enough to get both HeroUI component styles and the full Tailwind utility
  * class set. The @tailwindcss/vite plugin in vite.config.ts processes the
