@@ -62,10 +62,16 @@ jobs:
       - name: Build project
         # You can change the base path to your repository name
         run: |
+          cd uis
           export NODE_ENV=production
           npx vite build --base="/${{ github.event.repository.name }}/"
         
-
+      - name: Upload pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          # Upload docs directory
+          path: "ui/dist"
+          
   deploy:
     environment:
       name: github-pages
