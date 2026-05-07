@@ -1,10 +1,10 @@
-# AI Proxy Cloudflare Worker v2.0
+# AI Proxy Cloudflare Worker v2.1
 
 Modern proxy to route API requests through the **Cloudflare AI Gateway**.
 
 ## 🚀 Features
 
-- ✅ **On-the-fly decryption** of `ai.json.enc` when the worker starts (embedded in the bundle)
+- ✅ **On-the-fly decryption** of `ai.json.enc` stored in KV
 - ✅ **User validation** using keys stored in KV (`users` key)
 - ✅ **Multi-provider routing** (Groq, SambaNova, Anthropic, OpenAI, Gemini)
 - ✅ **Backward compatibility** with both legacy request formats
@@ -12,7 +12,7 @@ Modern proxy to route API requests through the **Cloudflare AI Gateway**.
 - ✅ Optional **rate limiting** via Durable Objects
 - ✅ Preconfigured **CORS**
 - ✅ Transparent **streaming** support
-- ✅ **Build automation** — `ai.json.enc` is automatically converted to TypeScript
+- ✅ **Vault management** via HTTP endpoints
 
 ## 📋 Requirements
 
@@ -79,7 +79,12 @@ The `src/config/ai.json.enc` file must be:
 }
 ```
 
-### 3. Initialize KV with users
+### 3. Upload to Cloudflare KV:
+```bash
+wrangler kv:key put vault:ai.json.enc --path=ai.json.enc --namespace-id=YOUR_KV_NAMESPACE_ID
+```
+
+### 4. Initialize KV with users
 
 Load valid users into KV (`KV_AI_PROXY`), key `users`:
 
@@ -146,6 +151,37 @@ Client request
 Cloudflare AI Gateway
     ↓
 Final provider (Groq, SambaNova, etc.)
+```
+
+--- 
+
+## 🔄 Vault Management Endpoints
+
+The worker now includes endpoints to manage the encrypted configuration vault:
+
+### GET /ai.json.enc
+
+Returns the raw encrypted vault. Unauthenticated - anyone can download the encrypted blob.
+
+### PUT /ai.json.enc
+
+Updates the encrypted vault in KV. Requires `Authorization: Bearer` header matching `AI_JSON_CRYPTOKEN`.
+
+Example:
+```bash
+curl -X PUT https://ai-proxy.inet.pp.ua/ai.json.enc \
+  -H "Authorization: Bearer YOUR_CRYPTO_TOKEN" \
+  -H "Content-Type: text/plain" \
+  --data-binary @ai.json.enc
+```
+
+### GET /ai.json
+
+Returns the decrypted configuration. Authentication is performed by decrypting with the provided Bearer token.
+
+```bash
+curl -X GET https://ai-proxy.inet.pp.ua/ai.json \
+  -H "Authorization: Bearer YOUR_CRYPTO_TOKEN"
 ```
 
 ---
@@ -296,3 +332,5 @@ npm test
 AGPL-3.0-or-later
 
 Copyright © 2024-2026 Ronan LE MEILLAT
+
+

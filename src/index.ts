@@ -3,7 +3,7 @@
 //
 // AI Proxy Worker — Routes API requests through Cloudflare AI Gateway
 // Maintains backward compatibility with legacy endpoints
-// Decrypts ai.json.enc and validates user keys via KV
+// Decrypts ai.json.enc stored in KV and validates user keys via KV
 
 import { Hono } from 'hono';
 import { logger } from 'hono/logger';
@@ -13,18 +13,18 @@ import { decryptAiConfig, type AiConfig } from './lib/ai-enc';
 import { validateUserKey, extractBearerToken } from './lib/auth';
 import { forwardToCfAiGateway, detectProvider } from './lib/gateway';
 
-const AI_JSON_ENC_URL_DEFAULT = 'https://mcp.fufuni.pp.ua/ai.json.enc';
-const AI_JSON_ENC_CACHE_KEY = 'cache:ai.json.enc';
-const AI_JSON_ENC_CACHE_TTL_SECONDS = 3600;
+/**
+ * KV key where the encrypted AI provider configuration is stored.
+ */
+const AI_JSON_ENC_KV_KEY = 'vault:ai.json.enc';
 
 declare global {
   interface Env {
     KV_AI_PROXY: KVNamespace;
-    PROXY_RATE_LIMITER?: any;
+    PROXY_RATE_LIMITER: RateLimit;
     CLOUDFLARE_ACCOUNT_ID: string;
     AI_JSON_CRYPTOKEN: string;
     CLOUDFLARE_AIG_TOKEN: string;
-    AI_JSON_ENC_URL?: string;
     DEBUG?: string;
   }
 }
@@ -35,7 +35,10 @@ type HonoEnv = {
 
 const app = new Hono<HonoEnv>();
 
-// Cache decrypted config per environment
+/**
+ * In‑memory cache of the decrypted AI configuration.
+ * Cleared after a successful PUT to force re‑decryption with current vault.
+ */
 let cachedConfig: AiConfig | null = null;
 
 // ── Middleware ────────────────────────────────────────────────────────
@@ -44,49 +47,46 @@ app.use(logger());
 app.use('*', cors());
 
 /**
- * Load encrypted ai.json.enc from KV cache or remote URL.
- * Cached in KV for 1 hour to reduce remote fetches.
+ * Read the raw encrypted configuration from KV.
+ *
+ * @param env - Worker environment bindings
+ * @returns Base64‑encoded, OpenSSL‑compatible ciphertext
+ * @throws If the vault does not exist in KV or is empty
  */
-async function loadEncryptedAiJsonEnc(env: Env): Promise<string> {
-  const cached = await env.KV_AI_PROXY.get(AI_JSON_ENC_CACHE_KEY);
-  if (cached) return cached;
-
-  const sourceUrl = env.AI_JSON_ENC_URL || AI_JSON_ENC_URL_DEFAULT;
-  const response = await fetch(sourceUrl, { method: 'GET' });
-  if (!response.ok) {
-    throw new Error(`Unable to fetch ai.json.enc from ${sourceUrl}: ${response.status}`);
-  }
-
-  const encryptedPayload = await response.text();
+async function loadEncryptedVault(env: Env): Promise<string> {
+  const encryptedPayload = await env.KV_AI_PROXY.get(AI_JSON_ENC_KV_KEY);
   if (!encryptedPayload || encryptedPayload.trim().length === 0) {
-    throw new Error('Downloaded ai.json.enc is empty');
+    throw new Error('Encrypted vault (vault:ai.json.enc) not found in KV');
   }
-
-  await env.KV_AI_PROXY.put(AI_JSON_ENC_CACHE_KEY, encryptedPayload, {
-    expirationTtl: AI_JSON_ENC_CACHE_TTL_SECONDS,
-  });
-
   return encryptedPayload;
 }
 
 /**
- * Decrypt and cache the AI configuration once.
+ * Obtain the decrypted AI configuration, caching it in memory.
+ *
+ * @param env - Worker environment bindings
+ * @returns Decrypted AI configuration object
+ * @throws If the vault cannot be read or decryption fails
  */
 async function getAiConfig(env: Env): Promise<AiConfig> {
   if (cachedConfig) return cachedConfig;
 
   try {
-    const encryptedConfig = await loadEncryptedAiJsonEnc(env);
+    const encryptedConfig = await loadEncryptedVault(env);
     cachedConfig = await decryptAiConfig(encryptedConfig, env.AI_JSON_CRYPTOKEN);
     return cachedConfig;
   } catch (err) {
-    console.error('Failed to decrypt ai.json.enc:', err);
+    console.error('Failed to decrypt vault:', err);
     throw new Error('Configuration unavailable');
   }
 }
 
 /**
- * Validate rate limiting.
+ * Check rate limiting if a rate limiter is bound.
+ *
+ * @param request - Incoming Request
+ * @param env - Worker environment bindings
+ * @returns A 429 Response if the limit is exceeded, or null to proceed
  */
 async function checkRateLimit(
   request: Request,
@@ -120,7 +120,117 @@ async function checkRateLimit(
   }
 }
 
-// ── Routes ────────────────────────────────────────────────────────
+/**
+ * Validate the Bearer token against the configured crypto token.
+ * Used for the PUT /ai.json.enc endpoint.
+ *
+ * @param authHeader - The Authorization header value (or null)
+ * @param expected - The expected token string
+ * @returns true if the token is present and matches exactly
+ */
+function isCryptoTokenValid(authHeader: string | null, expected: string): boolean {
+  if (!authHeader) return false;
+  const match = authHeader.match(/^Bearer\s+(.+)$/i);
+  return match ? match[1] === expected : false;
+}
+
+// ── Endpoints ─────────────────────────────────────────────────────
+
+/**
+ * GET /ai.json.enc
+ *
+ * Returns the raw OpenSSL‑encrypted vault as plain text (base64).
+ * Unauthenticated – anyone with the worker URL can download the encrypted blob.
+ */
+app.get('/ai.json.enc', async (c) => {
+  try {
+    const encrypted = await c.env.KV_AI_PROXY.get(AI_JSON_ENC_KV_KEY);
+    if (!encrypted) {
+      return c.text('Vault not found', { status: 404 });
+    }
+    return c.text(encrypted, {
+      headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+    });
+  } catch (err) {
+    console.error('Failed to serve encrypted vault:', err);
+    return c.text('Internal Server Error', { status: 500 });
+  }
+});
+
+/**
+ * PUT /ai.json.enc
+ *
+ * Replaces the encrypted vault in KV.
+ * Secured with an Authorization: Bearer token that must match
+ * the environment variable AI_JSON_CRYPTOKEN.
+ *
+ * After a successful upload, the in‑memory decrypted configuration cache
+ * is cleared so the next proxy request will re‑decrypt with the new vault.
+ */
+app.put('/ai.json.enc', async (c) => {
+  const authHeader = c.req.header('Authorization');
+  if (!isCryptoTokenValid(authHeader || null, c.env.AI_JSON_CRYPTOKEN)) {
+    return c.json({ error: 'Unauthorized' }, { status: 403 });
+  }
+
+  try {
+    const body = await c.req.text();
+    if (!body || body.trim().length === 0) {
+      return c.json({ error: 'Empty body' }, { status: 400 });
+    }
+
+    await c.env.KV_AI_PROXY.put(AI_JSON_ENC_KV_KEY, body);
+
+    // Invalidate in‑memory cache so the next configuration access
+    // re‑decrypts the freshly stored vault.
+    cachedConfig = null;
+
+    return c.json({ ok: true, message: 'Vault updated' }, { status: 200 });
+  } catch (err) {
+    console.error('Failed to update vault:', err);
+    return c.json(
+      { error: 'Failed to store vault', message: err instanceof Error ? err.message : String(err) },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * GET /ai.json
+ *
+ * Returns the **decrypted** AI configuration as JSON.
+ * Authentication is performed by decrypting the vault with the Bearer token
+ * provided in the Authorization header. Only a correct token (i.e. the original
+ * encryption password) will result in a successful decryption.
+ */
+app.get('/ai.json', async (c) => {
+  const authHeader = c.req.header('Authorization');
+  const token = extractBearerToken(authHeader || null);
+
+  if (!token) {
+    return c.json({ error: 'Missing Authorization header' }, { status: 401 });
+  }
+
+  try {
+    const encrypted = await c.env.KV_AI_PROXY.get(AI_JSON_ENC_KV_KEY);
+    if (!encrypted) {
+      return c.json({ error: 'Vault not found' }, { status: 404 });
+    }
+
+    const decrypted = await decryptAiConfig(encrypted, token);
+    return c.json(decrypted);
+  } catch (err) {
+    // Decryption failure (wrong password, format error, etc.)
+    console.error('Failed to decrypt vault for GET /ai.json:', err);
+    return c.json(
+      {
+        error: 'Decryption failed',
+        message: 'The provided token does not match the encryption password, or the vault is corrupted.',
+      },
+      { status: 403 },
+    );
+  }
+});
 
 /**
  * Health check.
@@ -148,7 +258,7 @@ app.post('*', async (c) => {
   try {
     // Extract and validate authentication
     const authHeader = c.req.header('Authorization');
-    const bearerToken = extractBearerToken(authHeader);
+    const bearerToken = extractBearerToken(authHeader || null);
 
     if (!bearerToken) {
       return c.json(
@@ -170,7 +280,7 @@ app.post('*', async (c) => {
       console.log(`User [${username}] validated`);
     }
 
-    // Load AI configuration
+    // Load AI configuration (vault from KV, decrypted with env.AI_JSON_CRYPTOKEN)
     const config = await getAiConfig(env);
 
     // Parse request body
@@ -187,7 +297,7 @@ app.post('*', async (c) => {
     // Detect provider from path or X-Host-Final header
     const pathname = new URL(c.req.url).pathname;
     const xHostFinal = c.req.header('X-Host-Final');
-    const detected = detectProvider(pathname, xHostFinal, config);
+    const detected = detectProvider(pathname, xHostFinal || null, config);
 
     if (!detected) {
       return c.json(
@@ -241,8 +351,6 @@ app.post('*', async (c) => {
     );
   }
 });
-
-// ── Fallback ───────────────────────────────────────────────────────
 
 /**
  * 404 handler for unsupported paths/methods.
