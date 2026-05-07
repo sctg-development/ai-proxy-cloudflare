@@ -1,0 +1,45 @@
+{
+  "name": "ui",
+  "version": "1.0.0",
+  "description": "UI for managing AI key vault",
+  "homepage": "https://github.com/sctg-development/ai-proxy-cloudflare#readme",
+  "bugs": {
+    "url": "https://github.com/sctg-development/ai-proxy-cloudflare/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sctg-development/ai-proxy-cloudflare.git"
+  },
+  "license": "MIT",
+  "author": "Ronan Le Meillat",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "lint": "eslint src",
+    "test": "exit 0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.2.4",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@types/react-router-dom": "^5.3.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "eslint": "^10.3.0",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.59.2",
+    "vite": "^8.0.11"
+  },
+  "dependencies": {
+    "@heroui/react": "^3.0.3",
+    "@heroui/styles": "^3.0.3",
+    "i18next": "^26.0.10",
+    "lucide-react": "^1.14.0",
+    "react": "^19.2.6",
+    "react-i18next": "^17.0.7",
+    "react-router-dom": "^7.15.0",
+    "tailwindcss": "^4.2.4"
+  }
+}
