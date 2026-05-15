@@ -12,6 +12,7 @@ import { cors } from 'hono/cors';
 import { decryptAiConfig, type AiConfig } from './lib/ai-enc';
 import { validateUserKey, extractBearerToken } from './lib/auth';
 import { forwardToCfAiGateway, detectProvider } from './lib/gateway';
+import { checkBalance, deductBalance } from './lib/balance';
 
 /**
  * KV key where the encrypted AI provider configuration is stored.
@@ -26,6 +27,10 @@ declare global {
     AI_JSON_CRYPTOKEN: string;
     CLOUDFLARE_AIG_TOKEN: string;
     DEBUG?: string;
+    /** Base URL of the Fufuni merchant backend (e.g. https://api.fufuni.pp.ua). Optional. */
+    FUFUNI_MERCHANT_URL?: string;
+    /** Shared secret for proxy-to-merchant balance API. Optional. */
+    AI_BALANCE_SHARED_SECRET?: string;
   }
 }
 
@@ -280,6 +285,16 @@ app.post('*', async (c) => {
       console.log(`User [${username}] validated`);
     }
 
+    // Enforce AI token balance if Fufuni integration is configured.
+    // When FUFUNI_MERCHANT_URL is unset, balance check is skipped (standalone mode).
+    const balance = await checkBalance(bearerToken, env);
+    if (balance !== null && balance <= 0) {
+      return c.json(
+        { error: 'Insufficient AI token balance. Purchase more tokens at the store.' },
+        { status: 402 },
+      );
+    }
+
     // Load AI configuration (vault from KV, decrypted with env.AI_JSON_CRYPTOKEN)
     const config = await getAiConfig(env);
 
@@ -338,6 +353,11 @@ app.post('*', async (c) => {
       providerKey,
       debug: env.DEBUG === 'true',
     });
+
+    // Deduct 1 token unit from balance after successful request (non-blocking).
+    if (response.status < 400 && balance !== null) {
+      c.executionCtx.waitUntil(deductBalance(bearerToken, 1, env));
+    }
 
     return response;
   } catch (err) {

@@ -8,12 +8,16 @@
     ],
     // ── Environment variables (plaintext) ──────────────────────────────────
     "vars": {
-        "DEBUG": "false"
+        "DEBUG": "false",
+        // Set to your Fufuni merchant backend URL to enable AI token balance enforcement.
+        // Leave empty ("") or omit to run in standalone mode (no balance enforcement).
+        "FUFUNI_MERCHANT_URL": ""
     },
     // ── Secrets (loaded from .dev.vars or Wrangler secrets) ────────────────
     // Set via: wrangler secret put CLOUDFLARE_ACCOUNT_ID
     //          wrangler secret put AI_JSON_CRYPTOKEN
     //          wrangler secret put CLOUDFLARE_AIG_TOKEN
+    //          wrangler secret put AI_BALANCE_SHARED_SECRET  (required when FUFUNI_MERCHANT_URL is set)
     // ── KV Namespace binding ───────────────────────────────────────────────
     "kv_namespaces": [
         {
