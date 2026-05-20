@@ -261,6 +261,80 @@ describe('ai-proxy worker compatibility and model routing', () => {
     }
   });
 
+  it('liste les providers avec au moins une clé non expirée via /v1/providers', async () => {
+    const config = aiConfig as AiConfigType;
+    const expectedProviders = Object.entries(config.providers)
+      .filter(([, provider]) => provider.keys.some((key) => key.type !== 'expired'))
+      .map(([id, provider]) => ({ id, object: 'provider', protocol: provider.protocol }));
+
+    const req = new Request('https://ai-proxy.inet.pp.ua/v1/providers', {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${validUserToken}`,
+      },
+    });
+
+    const res = await SELF.fetch(req);
+    const payload = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(payload).toEqual({ object: 'list', data: expectedProviders });
+  });
+
+  it('retourne les modèles OpenAI-compatibles pour un provider via /:provider/v1/models', async () => {
+    const config = aiConfig as AiConfigType;
+    const [providerKey, provider] = Object.entries(config.providers)[0];
+    const expectedModels = provider.models.map((model) => ({
+      id: model.id,
+      object: 'model',
+      created: 0,
+      owned_by: providerKey,
+      context_window: model.contextWindow,
+      context_length: model.contextWindow,
+      max_completion_tokens: model.maxOutputTokens,
+    }));
+
+    const req = new Request(`https://ai-proxy.inet.pp.ua/${providerKey}/v1/models`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${validUserToken}`,
+      },
+    });
+
+    const res = await SELF.fetch(req);
+    const payload = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(payload).toEqual({ object: 'list', data: expectedModels });
+  });
+
+  it('retourne les métadonnées du modèle via /:provider/v1/models/:modelId', async () => {
+    const config = aiConfig as AiConfigType;
+    const [providerKey, provider] = Object.entries(config.providers)[0];
+    const model = provider.models[0];
+
+    const req = new Request(`https://ai-proxy.inet.pp.ua/${providerKey}/v1/models/${encodeURIComponent(model.id)}`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${validUserToken}`,
+      },
+    });
+
+    const res = await SELF.fetch(req);
+    const payload = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(payload).toEqual({
+      id: model.id,
+      object: 'model',
+      created: 0,
+      owned_by: providerKey,
+      context_window: model.contextWindow,
+      context_length: model.contextWindow,
+      max_completion_tokens: model.maxOutputTokens,
+    });
+  });
+
   it('refuse une clé utilisateur invalide', async () => {
     const req = new Request('https://ai-proxy.inet.pp.ua/openai/v1/chat/completions', {
       method: 'POST',
