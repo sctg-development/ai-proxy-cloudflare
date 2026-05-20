@@ -1,3 +1,5 @@
+// run with `AI_JSON_CRYPTOKEN=04e…d79 npm test`
+
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { env, SELF, reset } from 'cloudflare:test';
 
@@ -128,7 +130,8 @@ describe('ai-proxy worker compatibility and model routing', () => {
     }));
   });
 
-  it('reste compatible avec /openai/v1/chat/completions (X-Host-Final: api.groq.com)', async () => {
+
+  it('maintains compatibility with /openai/v1/chat/completions (X-Host-Final: api.groq.com)', async () => {
     const req = new Request('https://ai-proxy.inet.pp.ua/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -153,7 +156,8 @@ describe('ai-proxy worker compatibility and model routing', () => {
     expect(outboundBody.model).toBe('groq/meta-llama/llama-4-scout-17b-16e-instruct');
   });
 
-  it('reste compatible avec /v1/chat/completions (X-Host-Final: api.sambanova.ai)', async () => {
+
+  it('maintains compatibility with /v1/chat/completions (X-Host-Final: api.sambanova.ai)', async () => {
     const req = new Request('https://ai-proxy.inet.pp.ua/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -175,7 +179,8 @@ describe('ai-proxy worker compatibility and model routing', () => {
     expect(outboundBody.model).toBe('custom-sambanova/Meta-Llama-3.3-70B-Instruct');
   });
 
-  it('route tous les modèles déclarés dans ai.json via la gateway avec préfixe provider', async () => {
+
+  it('routes all declared models in ai.json via the gateway with provider prefix', async () => {
     const config = aiConfig as AiConfigType;
 
     for (const [providerKey, provider] of Object.entries(config.providers)) {
@@ -214,7 +219,8 @@ describe('ai-proxy worker compatibility and model routing', () => {
     }
   });
 
-  it('interroge le modèle de chat à priorité minimale pour chaque provider avec clés non expirées', async () => {
+
+  it('queries the lowest priority chat model for each provider with non-expired keys', async () => {
     const config = aiConfig as AiConfigType;
 
     for (const [providerKey, provider] of Object.entries(config.providers)) {
@@ -261,7 +267,8 @@ describe('ai-proxy worker compatibility and model routing', () => {
     }
   });
 
-  it('liste les providers avec au moins une clé non expirée via /v1/providers', async () => {
+
+  it('lists providers with at least one non-expired key via /v1/providers', async () => {
     const config = aiConfig as AiConfigType;
     const expectedProviders = Object.entries(config.providers)
       .filter(([, provider]) => provider.keys.some((key) => key.type !== 'expired'))
@@ -281,7 +288,8 @@ describe('ai-proxy worker compatibility and model routing', () => {
     expect(payload).toEqual({ object: 'list', data: expectedProviders });
   });
 
-  it('retourne les modèles OpenAI-compatibles pour un provider via /:provider/v1/models', async () => {
+
+  it('returns OpenAI-compatible models for a provider via /:provider/v1/models', async () => {
     const config = aiConfig as AiConfigType;
     const [providerKey, provider] = Object.entries(config.providers)[0];
     const expectedModels = provider.models.map((model) => ({
@@ -308,7 +316,8 @@ describe('ai-proxy worker compatibility and model routing', () => {
     expect(payload).toEqual({ object: 'list', data: expectedModels });
   });
 
-  it('retourne les métadonnées du modèle via /:provider/v1/models/:modelId', async () => {
+
+  it('returns model metadata via /:provider/v1/models/:modelId', async () => {
     const config = aiConfig as AiConfigType;
     const [providerKey, provider] = Object.entries(config.providers)[0];
     const model = provider.models[0];
@@ -335,7 +344,8 @@ describe('ai-proxy worker compatibility and model routing', () => {
     });
   });
 
-  it('refuse une clé utilisateur invalide', async () => {
+
+  it('rejects an invalid user key', async () => {
     const req = new Request('https://ai-proxy.inet.pp.ua/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
