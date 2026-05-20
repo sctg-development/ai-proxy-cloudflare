@@ -1,6 +1,6 @@
 {
   "name": "ai-proxy-cloudflare",
-  "version": "2.0.0",
+  "version": "2.2.0",
   "description": "AI Proxy Cloudflare Worker — routes requests through Cloudflare AI Gateway with ai.json.enc decryption",
   "type": "module",
   "author": "Ronan LE MEILLAT",
