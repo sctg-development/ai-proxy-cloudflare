@@ -4,7 +4,15 @@
 // AI configuration decryption utility
 // Decrypts ai.json.enc using Web Crypto API (Node.js ≥18 & Cloudflare Workers)
 
-export type AiProtocol = 'openai' | 'groq' | 'sambanova' | 'anthropic' | 'gemini';
+export type AiProtocol =
+  | 'openai'
+  | 'groq'
+  | 'sambanova'
+  | 'anthropic'
+  | 'gemini'
+  | 'mistral'
+  | 'openrouter'
+  | 'morph';
 
 export interface AiKey {
   key: string;
@@ -14,6 +22,7 @@ export interface AiKey {
 
 export interface AiModel {
   id: string;
+  usage?: 'chat' | 'embedding';
   contextWindow: number;
   maxOutputTokens: number;
   tpmLimit: number | null;

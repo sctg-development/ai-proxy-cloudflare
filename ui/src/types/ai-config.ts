@@ -6,7 +6,15 @@
 /**
  * Supported AI protocols.
  */
-export type AiProtocol = 'openai' | 'groq' | 'sambanova' | 'anthropic' | 'gemini';
+export type AiProtocol =
+  | 'openai'
+  | 'groq'
+  | 'sambanova'
+  | 'anthropic'
+  | 'gemini'
+  | 'mistral'
+  | 'openrouter'
+  | 'morph';
 
 /**
  * Represents an API key in the vault.
@@ -26,6 +34,8 @@ export interface AiKey {
 export interface AiModel {
   /** The model identifier (e.g., 'gpt-4') */
   id: string;
+  /** API surface this model should be used with. */
+  usage: 'chat' | 'embedding';
   /** Context window size in tokens */
   contextWindow: number;
   /** Maximum output tokens allowed */

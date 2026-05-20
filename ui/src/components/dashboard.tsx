@@ -1,10 +1,11 @@
 /**
  * @file Main dashboard for managing the AI vault.
  * Providers, their models and their API keys are all managed from here.
- * Changes are encrypted client-side and saved back to the Worker via PUT /ai.json.enc.
+ * Changes are edited as a local draft first. The encrypted Worker vault is only
+ * updated when the user explicitly presses the save button.
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Alert,
   Button,
@@ -22,7 +23,9 @@ import {
 import { useAi } from '../hooks/use-ai';
 import {
   Box,
+  DownloadCloud,
   Edit,
+  GripVertical,
   Key,
   LogOut,
   Plus,
@@ -34,6 +37,12 @@ import {
   X,
 } from 'lucide-react';
 import type { AiConfig, AiKey, AiModel, AiProtocol, AiProvider } from '../types/ai-config';
+import {
+  canDiscoverProviderModels,
+  discoverProviderModels,
+  maskApiKey,
+  renumberPriorities,
+} from '../lib/provider-models';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -63,6 +72,12 @@ interface EditTarget {
 export const Dashboard: React.FC = () => {
   const { config, loading, error, logout, refresh, updateConfig } = useAi();
 
+  /** Editable copy of the loaded vault. Only this draft is mutated by UI actions. */
+  const [draftConfig, setDraftConfig] = useState<AiConfig | null>(null);
+
+  /** True when `draftConfig` contains changes that are not yet persisted. */
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+
   /** Currently selected top-level tab ("providers"). */
   const [activeTab, setActiveTab] = useState<string>('providers');
 
@@ -72,12 +87,32 @@ export const Dashboard: React.FC = () => {
   /** Which provider/model/key is being edited. null = "add new" mode. */
   const [editTarget, setEditTarget] = useState<EditTarget | null>(null);
 
+  /** Provider currently refreshing its model catalogue from an upstream API. */
+  const [syncingProviderId, setSyncingProviderId] = useState<string | null>(null);
+
+  /** Per-provider sync status shown next to the model list after refresh. */
+  const [modelSyncMessages, setModelSyncMessages] = useState<Record<string, string>>({});
+
   /**
    * Controlled open/close state for the config modal.
    * `useOverlayState` is the HeroUI-idiomatic way to drive a Modal from
    * outside (rather than using a trigger button inside the modal tree).
    */
   const modalState = useOverlayState();
+
+  /**
+   * Keeps the local draft aligned with the server config as long as the user has
+   * no pending edits. Once the draft is dirty, incoming hook updates are ignored
+   * until the user saves or discards their edits.
+   */
+  useEffect(() => {
+    if (config && !hasUnsavedChanges) {
+      setDraftConfig(JSON.parse(JSON.stringify(config)) as AiConfig);
+    }
+  }, [config, hasUnsavedChanges]);
+
+  /** Config currently displayed by the dashboard; falls back during first render after load. */
+  const activeConfig = draftConfig ?? config;
 
   // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -93,20 +128,54 @@ export const Dashboard: React.FC = () => {
   };
 
   /**
-   * Saves a new config version to the Worker.
+   * Stages a new config version locally without writing to the Worker.
    * deep-clone with JSON.parse(JSON.stringify()) avoids
    * mutating React state directly, which would cause subtle bugs.
    *
    * @param newConfig - The full updated config object.
    */
-  const handleSave = async (newConfig: AiConfig) => {
+  const stageConfig = (newConfig: AiConfig) => {
+    setDraftConfig(JSON.parse(JSON.stringify(newConfig)) as AiConfig);
+    setHasUnsavedChanges(true);
+    modalState.close();
+    setEditTarget(null);
+  };
+
+  /**
+   * Encrypts and persists the current draft. This is the only dashboard action
+   * that calls PUT /ai.json.enc through the context's `updateConfig`.
+   */
+  const saveDraftToWorker = async () => {
+    if (!draftConfig) return;
     try {
-      await updateConfig(newConfig);
-      modalState.close();
-      setEditTarget(null);
+      await updateConfig(draftConfig);
+      setHasUnsavedChanges(false);
     } catch (err) {
       console.error('Vault update failed', err);
     }
+  };
+
+  /**
+   * Drops all local edits and restores the last configuration fetched from the
+   * Worker.
+   */
+  const discardDraft = () => {
+    if (!config) return;
+    if (hasUnsavedChanges && !confirm('Discard unsaved vault changes?')) return;
+    setDraftConfig(JSON.parse(JSON.stringify(config)) as AiConfig);
+    setHasUnsavedChanges(false);
+    modalState.close();
+    setEditTarget(null);
+  };
+
+  /**
+   * Refreshes from the Worker. If the draft is dirty, this would overwrite the
+   * local work, so the user decides explicitly.
+   */
+  const refreshFromWorker = async () => {
+    if (hasUnsavedChanges && !confirm('Discard unsaved changes and reload from the Worker?')) return;
+    setHasUnsavedChanges(false);
+    await refresh();
   };
 
   /**
@@ -114,21 +183,101 @@ export const Dashboard: React.FC = () => {
    * @param id - The provider dictionary key.
    */
   const deleteProvider = (id: string) => {
-    if (!config) return;
+    if (!activeConfig) return;
     if (!confirm(`Delete provider "${id}" and all its models and keys?`)) return;
 
     // Spread-clone the top level, then delete the key from the cloned providers map.
     const newConfig: AiConfig = {
-      ...config,
-      providers: { ...config.providers },
+      ...activeConfig,
+      providers: { ...activeConfig.providers },
     };
     delete newConfig.providers[id];
-    handleSave(newConfig);
+    stageConfig(newConfig);
+  };
+
+  /**
+   * Replaces one provider's model list with the catalogue returned by its
+   * upstream API. The first non-expired key is used because expired keys are
+   * deliberately kept in the vault for audit/history but must not be tested.
+   */
+  const refreshProviderModels = async (id: string) => {
+    if (!activeConfig) return;
+
+    const provider = activeConfig.providers[id];
+    const usableKey = provider.keys.find((apiKey) => apiKey.type !== 'expired');
+    if (!usableKey) {
+      setModelSyncMessages((messages) => ({
+        ...messages,
+        [id]: 'Aucune clé non expirée disponible pour interroger ce provider.',
+      }));
+      return;
+    }
+
+    setSyncingProviderId(id);
+    setModelSyncMessages((messages) => ({
+      ...messages,
+      [id]: `Interrogation avec la clé ${maskApiKey(usableKey.key)}…`,
+    }));
+
+    try {
+      const result = await discoverProviderModels(id, provider, usableKey.key, provider.models);
+      if (result.models.length === 0) {
+        setModelSyncMessages((messages) => ({
+          ...messages,
+          [id]: 'Aucun modèle chat ou embedding exploitable trouvé dans la réponse API.',
+        }));
+        return;
+      }
+
+      const newConfig: AiConfig = JSON.parse(JSON.stringify(activeConfig));
+      newConfig.providers[id].models = result.models;
+      stageConfig(newConfig);
+      setModelSyncMessages((messages) => ({
+        ...messages,
+        [id]: [
+          `${result.models.length} modèle(s) synchronisé(s).`,
+          ...result.notes,
+        ].join(' '),
+      }));
+    } catch (err) {
+      setModelSyncMessages((messages) => ({
+        ...messages,
+        [id]: err instanceof Error ? err.message : 'Synchronisation des modèles impossible.',
+      }));
+    } finally {
+      setSyncingProviderId(null);
+    }
+  };
+
+  /**
+   * Saves a reordered model array and regenerates priorities from the visible
+   * order. Priority `0` is the first model in the list.
+   */
+  const reorderProviderModels = (id: string, models: AiModel[]) => {
+    if (!activeConfig) return;
+    const newConfig: AiConfig = JSON.parse(JSON.stringify(activeConfig));
+    newConfig.providers[id].models = renumberPriorities(models);
+    stageConfig(newConfig);
+  };
+
+  /**
+   * Deletes several models at once and then compacts priorities using the same
+   * step-based numbering as drag-and-drop.
+   */
+  const deleteProviderModels = (id: string, modelIds: string[]) => {
+    if (!activeConfig || modelIds.length === 0) return;
+    if (!confirm(`Delete ${modelIds.length} selected model(s) from "${id}"?`)) return;
+    const toDelete = new Set(modelIds);
+    const newConfig: AiConfig = JSON.parse(JSON.stringify(activeConfig));
+    newConfig.providers[id].models = renumberPriorities(
+      newConfig.providers[id].models.filter((model) => !toDelete.has(model.id)),
+    );
+    stageConfig(newConfig);
   };
 
   // ── Render guards ─────────────────────────────────────────────────────────
 
-  if (!config && loading) {
+  if (!activeConfig && loading) {
     return (
       <div className="flex h-screen items-center justify-center font-medium">
         Loading Vault…
@@ -136,7 +285,7 @@ export const Dashboard: React.FC = () => {
     );
   }
 
-  if (!config) {
+  if (!activeConfig) {
     return (
       <div className="p-8 text-center">
         <Alert status="danger">
@@ -163,14 +312,37 @@ export const Dashboard: React.FC = () => {
             <h1 className="text-xl font-bold">AI Vault Manager</h1>
             {/* Chip used here as a small inline version badge */}
             <Chip size="sm" variant="secondary" className="ml-2">
-              v{config.version}
+              v{activeConfig.version}
             </Chip>
+            {hasUnsavedChanges && (
+              <Chip size="sm" variant="soft" color="warning" className="ml-1">
+                Unsaved
+              </Chip>
+            )}
           </div>
           <div className="flex items-center gap-2">
             {/* Refresh re-fetches the decrypted config from the Worker */}
-            <Button variant="ghost" size="sm" onPress={refresh} isPending={loading}>
+            <Button variant="ghost" size="sm" onPress={refreshFromWorker} isPending={loading}>
               <RefreshCw className="mr-2 h-4 w-4" />
               Sync
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onPress={discardDraft}
+              isDisabled={!hasUnsavedChanges}
+            >
+              <X className="mr-2 h-4 w-4" />
+              Discard
+            </Button>
+            <Button
+              size="sm"
+              onPress={saveDraftToWorker}
+              isPending={loading}
+              isDisabled={!hasUnsavedChanges}
+            >
+              <Save className="mr-2 h-4 w-4" />
+              Save Vault
             </Button>
             <Button variant="danger-soft" size="sm" onPress={logout}>
               <LogOut className="mr-2 h-4 w-4" />
@@ -225,7 +397,7 @@ export const Dashboard: React.FC = () => {
             </div>
 
             <div className="grid gap-6">
-              {Object.entries(config.providers).map(([id, provider]) => (
+              {Object.entries(activeConfig.providers).map(([id, provider]) => (
                 <ProviderCard
                   key={id}
                   id={id}
@@ -256,17 +428,19 @@ export const Dashboard: React.FC = () => {
                   }
                   onDeleteKey={(index) => {
                     // Immutably remove the key at `index` from the array.
-                    const newConfig: AiConfig = JSON.parse(JSON.stringify(config));
+                    const newConfig: AiConfig = JSON.parse(JSON.stringify(activeConfig));
                     newConfig.providers[id].keys.splice(index, 1);
-                    handleSave(newConfig);
+                    stageConfig(newConfig);
                   }}
                   onDeleteModel={(modelId) => {
-                    const newConfig: AiConfig = JSON.parse(JSON.stringify(config));
-                    newConfig.providers[id].models = newConfig.providers[
-                      id
-                    ].models.filter((m) => m.id !== modelId);
-                    handleSave(newConfig);
+                    deleteProviderModels(id, [modelId]);
                   }}
+                  onDeleteSelectedModels={(modelIds) => deleteProviderModels(id, modelIds)}
+                  onRefreshModels={() => refreshProviderModels(id)}
+                  canRefreshModels={canDiscoverProviderModels(id, provider)}
+                  isRefreshingModels={syncingProviderId === id}
+                  modelSyncMessage={modelSyncMessages[id]}
+                  onReorderModels={(models) => reorderProviderModels(id, models)}
                 />
               ))}
             </div>
@@ -279,8 +453,8 @@ export const Dashboard: React.FC = () => {
         state={modalState}
         type={modalType}
         editTarget={editTarget}
-        config={config}
-        onSave={handleSave}
+        config={activeConfig}
+        onSave={stageConfig}
       />
     </div>
   );
@@ -310,6 +484,18 @@ interface ProviderCardProps {
   onDeleteKey: (index: number) => void;
   /** Called with the model.id to delete. */
   onDeleteModel: (id: string) => void;
+  /** Called with every selected model id to delete as one draft operation. */
+  onDeleteSelectedModels: (ids: string[]) => void;
+  /** Called when the user asks the UI to reload models from the provider API. */
+  onRefreshModels: () => void;
+  /** Whether this provider has a known upstream model-list API implementation. */
+  canRefreshModels: boolean;
+  /** Whether the upstream model-list request is in flight. */
+  isRefreshingModels: boolean;
+  /** Last sync result or error for the provider. */
+  modelSyncMessage?: string;
+  /** Called with models in their new visual order. */
+  onReorderModels: (models: AiModel[]) => void;
 }
 
 /**
@@ -330,6 +516,12 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
   onEditModel,
   onDeleteKey,
   onDeleteModel,
+  onDeleteSelectedModels,
+  onRefreshModels,
+  canRefreshModels,
+  isRefreshingModels,
+  modelSyncMessage,
+  onReorderModels,
 }) => {
   return (
     <Card className="overflow-hidden border-l-4 border-l-primary">
@@ -379,65 +571,33 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
 
           {/* ── Models panel ────────────────────────────────────────────── */}
           <Tabs.Panel id="models" className="p-4">
-            <div className="mb-2 flex justify-end">
+            <div className="mb-3 flex flex-wrap justify-end gap-2">
+              <Button
+                size="sm"
+                variant="tertiary"
+                onPress={onRefreshModels}
+                isPending={isRefreshingModels}
+                isDisabled={!canRefreshModels || provider.keys.every((apiKey) => apiKey.type === 'expired')}
+              >
+                <DownloadCloud className="mr-2 h-3.5 w-3.5" />
+                Refresh from API
+              </Button>
               <Button size="sm" variant="tertiary" onPress={onAddModel}>
                 <Plus className="mr-2 h-3.5 w-3.5" />
                 Add Model
               </Button>
             </div>
-            <Table variant="secondary">
-              <Table.ScrollContainer>
-                <Table.Content aria-label={`${id} models`}>
-                  <Table.Header>
-                    <Table.Column isRowHeader>Model ID</Table.Column>
-                    <Table.Column>Context</Table.Column>
-                    <Table.Column>Priority</Table.Column>
-                    <Table.Column className="text-end">Actions</Table.Column>
-                  </Table.Header>
-                  <Table.Body>
-                    {provider.models.map((model) => (
-                      <Table.Row key={model.id}>
-                        <Table.Cell className="font-medium">{model.id}</Table.Cell>
-                        <Table.Cell>
-                          {model.contextWindow.toLocaleString()} tokens
-                        </Table.Cell>
-                        <Table.Cell>
-                          {/* Lower priority number = higher selection priority */}
-                          <Chip
-                            size="sm"
-                            variant={model.priority === 0 ? 'primary' : 'secondary'}
-                          >
-                            {model.priority}
-                          </Chip>
-                        </Table.Cell>
-                        <Table.Cell>
-                          <div className="flex justify-end gap-1">
-                            <Button
-                              isIconOnly
-                              size="sm"
-                              variant="ghost"
-                              onPress={() => onEditModel(model.id)}
-                              aria-label={`Edit model ${model.id}`}
-                            >
-                              <Edit className="h-3.5 w-3.5" />
-                            </Button>
-                            <Button
-                              isIconOnly
-                              size="sm"
-                              variant="danger-soft"
-                              onPress={() => onDeleteModel(model.id)}
-                              aria-label={`Delete model ${model.id}`}
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
-                          </div>
-                        </Table.Cell>
-                      </Table.Row>
-                    ))}
-                  </Table.Body>
-                </Table.Content>
-              </Table.ScrollContainer>
-            </Table>
+            {modelSyncMessage && (
+              <p className="mb-3 text-sm text-muted-foreground">{modelSyncMessage}</p>
+            )}
+            <ModelPriorityList
+              providerId={id}
+              models={provider.models}
+              onEditModel={onEditModel}
+              onDeleteModel={onDeleteModel}
+              onDeleteSelectedModels={onDeleteSelectedModels}
+              onReorderModels={onReorderModels}
+            />
           </Tabs.Panel>
 
           {/* ── API Keys panel ──────────────────────────────────────────── */}
@@ -505,6 +665,228 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
         </Tabs>
       </Card.Content>
     </Card>
+  );
+};
+
+// ─── ModelPriorityList ───────────────────────────────────────────────────────
+
+/** Props for {@link ModelPriorityList}. */
+interface ModelPriorityListProps {
+  /** Provider identifier used for accessible labels. */
+  providerId: string;
+  /** Models in their current visual and priority order. */
+  models: AiModel[];
+  /** Opens the existing model edit modal. */
+  onEditModel: (id: string) => void;
+  /** Removes one model from the provider. */
+  onDeleteModel: (id: string) => void;
+  /** Stages deletion for all selected model ids. */
+  onDeleteSelectedModels: (ids: string[]) => void;
+  /** Stages a new model order and regenerates priorities upstream. */
+  onReorderModels: (models: AiModel[]) => void;
+}
+
+/**
+ * Drag-and-drop model list.
+ *
+ * HTML drag events are enough here: we only need to reorder an in-memory array
+ * and then save the whole vault. When a row is dropped, the parent rewrites the
+ * provider's `models` array and calls `renumberPriorities`, so the priority
+ * numbers always match what the user sees on screen.
+ */
+const ModelPriorityList: React.FC<ModelPriorityListProps> = ({
+  providerId,
+  models,
+  onEditModel,
+  onDeleteModel,
+  onDeleteSelectedModels,
+  onReorderModels,
+}) => {
+  /** Row currently being dragged, stored as an index into `models`. */
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+
+  /** Row currently hovered as a drop target, used only for visual feedback. */
+  const [dropIndex, setDropIndex] = useState<number | null>(null);
+
+  /** Model IDs checked for a batch delete operation. */
+  const [selectedModelIds, setSelectedModelIds] = useState<Set<string>>(new Set());
+
+  /** Clears stale selections when the provider model list changes. */
+  useEffect(() => {
+    setSelectedModelIds((selectedIds) => {
+      const availableIds = new Set(models.map((model) => model.id));
+      return new Set([...selectedIds].filter((id) => availableIds.has(id)));
+    });
+  }, [models]);
+
+  const allModelIds = models.map((model) => model.id);
+  const allSelected = allModelIds.length > 0 && allModelIds.every((id) => selectedModelIds.has(id));
+
+  /** Toggles one model checkbox without changing row order. */
+  const toggleModelSelection = (modelId: string) => {
+    setSelectedModelIds((selectedIds) => {
+      const next = new Set(selectedIds);
+      if (next.has(modelId)) next.delete(modelId);
+      else next.add(modelId);
+      return next;
+    });
+  };
+
+  /** Toggles every model in the provider list. */
+  const toggleAllModels = () => {
+    setSelectedModelIds(allSelected ? new Set() : new Set(allModelIds));
+  };
+
+  /** Sends the current selection to the parent, then clears it locally. */
+  const deleteSelectedModels = () => {
+    const ids = [...selectedModelIds];
+    if (ids.length === 0) return;
+    onDeleteSelectedModels(ids);
+    setSelectedModelIds(new Set());
+  };
+
+  /**
+   * Moves a row and stages the resulting order. The operation is ignored when
+   * the source and target are identical, which keeps accidental clicks cheap.
+   */
+  const reorder = (fromIndex: number, toIndex: number) => {
+    if (fromIndex === toIndex) return;
+    const next = [...models];
+    const [moved] = next.splice(fromIndex, 1);
+    next.splice(toIndex, 0, moved);
+    onReorderModels(next);
+  };
+
+  if (models.length === 0) {
+    return (
+      <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+        No models configured for {providerId}.
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-md border" role="table" aria-label={`${providerId} models`}>
+      <div className="flex items-center justify-between gap-3 border-b px-3 py-2">
+        <p className="text-sm text-muted-foreground">
+          {selectedModelIds.size} selected
+        </p>
+        <Button
+          size="sm"
+          variant="danger-soft"
+          onPress={deleteSelectedModels}
+          isDisabled={selectedModelIds.size === 0}
+        >
+          <Trash2 className="mr-2 h-3.5 w-3.5" />
+          Delete Selected
+        </Button>
+      </div>
+      <div
+        className="grid min-w-[920px] grid-cols-[44px_44px_minmax(260px,1fr)_110px_160px_120px_120px] items-center gap-3 border-b bg-muted/20 px-3 py-2 text-xs font-semibold uppercase text-muted-foreground"
+        role="row"
+      >
+        <span role="columnheader" aria-label="Drag handle" />
+        <span role="columnheader" aria-label="Select models">
+          <input
+            type="checkbox"
+            checked={allSelected}
+            onChange={toggleAllModels}
+            aria-label={`Select all ${providerId} models`}
+          />
+        </span>
+        <span role="columnheader">Model ID</span>
+        <span role="columnheader">Usage</span>
+        <span role="columnheader">Context</span>
+        <span role="columnheader">Priority</span>
+        <span role="columnheader" className="text-end">Actions</span>
+      </div>
+
+      <div className="overflow-x-auto">
+        {models.map((model, index) => (
+          <div
+            key={model.id}
+            draggable
+            role="row"
+            onDragStart={(event) => {
+              event.dataTransfer.effectAllowed = 'move';
+              event.dataTransfer.setData('text/plain', String(index));
+              setDraggedIndex(index);
+            }}
+            onDragOver={(event) => {
+              event.preventDefault();
+              event.dataTransfer.dropEffect = 'move';
+              setDropIndex(index);
+            }}
+            onDragLeave={() => setDropIndex(null)}
+            onDrop={(event) => {
+              event.preventDefault();
+              const fromIndex = Number(event.dataTransfer.getData('text/plain'));
+              if (Number.isInteger(fromIndex)) reorder(fromIndex, index);
+              setDraggedIndex(null);
+              setDropIndex(null);
+            }}
+            onDragEnd={() => {
+              setDraggedIndex(null);
+              setDropIndex(null);
+            }}
+            className={[
+              'grid min-w-[920px] grid-cols-[44px_44px_minmax(260px,1fr)_110px_160px_120px_120px] items-center gap-3 border-b px-3 py-2 last:border-b-0',
+              'transition-colors',
+              draggedIndex === index ? 'bg-muted/30 opacity-70' : '',
+              dropIndex === index && draggedIndex !== index ? 'bg-primary/10' : '',
+            ].join(' ')}
+          >
+            <div role="cell" className="flex h-9 items-center justify-center text-muted-foreground">
+              <GripVertical className="h-4 w-4 cursor-grab" aria-hidden="true" />
+            </div>
+            <div role="cell" className="flex h-9 items-center justify-center">
+              <input
+                type="checkbox"
+                checked={selectedModelIds.has(model.id)}
+                onChange={() => toggleModelSelection(model.id)}
+                aria-label={`Select model ${model.id}`}
+              />
+            </div>
+            <div role="cell" className="min-w-0 font-medium">
+              <span className="block truncate" title={model.id}>{model.id}</span>
+            </div>
+            <div role="cell">
+              <Chip size="sm" variant="soft" color={model.usage === 'embedding' ? 'accent' : 'default'}>
+                {model.usage}
+              </Chip>
+            </div>
+            <div role="cell" className="text-sm">
+              {model.contextWindow.toLocaleString()} tokens
+            </div>
+            <div role="cell">
+              <Chip size="sm" variant={model.priority === 0 ? 'primary' : 'secondary'}>
+                {model.priority}
+              </Chip>
+            </div>
+            <div role="cell" className="flex justify-end gap-1">
+              <Button
+                isIconOnly
+                size="sm"
+                variant="ghost"
+                onPress={() => onEditModel(model.id)}
+                aria-label={`Edit model ${model.id}`}
+              >
+                <Edit className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                isIconOnly
+                size="sm"
+                variant="danger-soft"
+                onPress={() => onDeleteModel(model.id)}
+                aria-label={`Delete model ${model.id}`}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 };
 
@@ -601,6 +983,7 @@ const ConfigModal: React.FC<ConfigModalProps> = ({
     } else if (type === 'model' && editTarget) {
       const model: AiModel = {
         id: data.id,
+        usage: data.usage === 'embedding' ? 'embedding' : 'chat',
         contextWindow: Number(data.contextWindow),
         maxOutputTokens: Number(data.maxOutputTokens),
         priority: Number(data.priority),
@@ -707,6 +1090,15 @@ const ConfigModal: React.FC<ConfigModalProps> = ({
                       <Input placeholder="gpt-4o" />
                     </TextField>
 
+                    <TextField
+                      isRequired
+                      name="usage"
+                      defaultValue={getInitialValue('usage') || 'chat'}
+                    >
+                      <Label>Usage</Label>
+                      <Input placeholder="chat or embedding" />
+                    </TextField>
+
                     <div className="grid grid-cols-2 gap-4">
                       <TextField
                         isRequired
@@ -782,7 +1174,7 @@ const ConfigModal: React.FC<ConfigModalProps> = ({
                 </Button>
                 <Button type="submit">
                   <Save className="mr-2 h-4 w-4" />
-                  Save Changes
+                  Apply to Draft
                 </Button>
               </Modal.Footer>
             </Form>

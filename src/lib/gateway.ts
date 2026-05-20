@@ -149,6 +149,7 @@ export function detectProvider(
       'generativelanguage.googleapis.com': 'gemini',
       'api.mistral.ai': 'mistral',
       'openrouter.ai': 'openrouter',
+      'api.morphllm.com': 'morph',
     };
 
     for (const [host, providerKey] of Object.entries(hostMap)) {
@@ -195,6 +196,11 @@ export function detectProvider(
   if (pathname.includes('/openrouter/')) {
     const provider = config.providers['openrouter'];
     if (provider) return { key: 'openrouter', provider };
+  }
+
+  if (pathname.includes('/morph/')) {
+    const provider = config.providers['morph'];
+    if (provider) return { key: 'morph', provider };
   }
 
   return null;

@@ -6,8 +6,11 @@ Modern proxy to route API requests through the **Cloudflare AI Gateway**.
 
 - ✅ **On-the-fly decryption** of `ai.json.enc` stored in KV
 - ✅ **User validation** using keys stored in KV (`users` key)
-- ✅ **Multi-provider routing** (Groq, SambaNova, Anthropic, OpenAI, Gemini)
+- ✅ **Multi-provider routing** (Groq, SambaNova, Anthropic, OpenAI, Gemini, Mistral, OpenRouter, Morph)
 - ✅ **OpenAI-compatible `:provider/v1/models` endpoint** per provider
+- ✅ **Vault UI model discovery** from provider APIs, with chat/embedding classification
+- ✅ **Drag-and-drop model priority management** in the vault UI
+- ✅ **Explicit vault saves**: UI edits stay local until the user saves
 - ✅ **Backward compatibility** with both legacy request formats
 - ✅ **Forwarding through Cloudflare AI Gateway** with automatic model ID prefixing
 - ✅ Optional **rate limiting** via Durable Objects
@@ -50,6 +53,7 @@ The `src/config/ai.json.enc` file must be:
       "models": [
         {
           "id": "llama-3.3-70b-versatile",
+          "usage": "chat",
           "contextWindow": 8192,
           "maxOutputTokens": 2048,
           "tpmLimit": null,
@@ -69,6 +73,7 @@ The `src/config/ai.json.enc` file must be:
       "models": [
         {
           "id": "Meta-Llama-3.3-70B-Instruct",
+          "usage": "chat",
           "contextWindow": 4096,
           "maxOutputTokens": 2048,
           "tpmLimit": null,
@@ -147,6 +152,54 @@ Response format (OpenAI-compatible):
 }
 ```
 
+### Model metadata fields
+
+Every model entry in `ai.json` is normalized to the shape consumed by the Worker
+and the UI:
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `id` | yes | Provider model identifier exactly as it must be sent upstream. |
+| `usage` | yes | `chat` for chat/completion models, `embedding` for embedding models. The UI sync only imports these two families because they are the proxy-supported model classes. |
+| `contextWindow` | yes | Maximum context size in tokens. For embedding models this is the maximum input size. |
+| `maxOutputTokens` | yes | Maximum generated output tokens. Embedding models use `0` because they do not generate completions. |
+| `tpmLimit` | yes | Tokens-per-minute limit when known, otherwise `null`. Most provider model-list APIs do not expose account-specific TPM limits. |
+| `priority` | yes | Lower numbers are preferred. The UI regenerates this field from the visible model order using steps of 10: `0`, `10`, `20`, etc. |
+| `tags` | no | Optional free-form labels. |
+| `gatewayPrefix` | no | Optional per-model gateway prefix override. |
+
+### Vault UI model discovery
+
+The UI can refresh one provider's model list directly from the provider API.
+Open the provider card, then use **Refresh from API** in the Models tab. The UI
+uses the first API key whose `type` is not `expired`, queries the provider's
+model-list endpoint, normalizes the result, and replaces the provider's model
+list in the local draft. Nothing is sent to `PUT /ai.json.enc` until the user
+presses **Save Vault**.
+
+Existing model order is preserved when a refreshed model ID was already present.
+New models are appended after known models, grouped as chat models before
+embedding models. After every refresh or drag-and-drop reorder, priorities are
+rewritten in increments of 10 starting at `0`, so the first visible model has
+the highest priority and there is room to insert manual priorities between rows.
+
+Provider-specific discovery behavior:
+
+| Provider | Model-list API | Limit source | Usage classification |
+| --- | --- | --- | --- |
+| Groq | `GET https://api.groq.com/openai/v1/models` with `Authorization: Bearer` | `context_window` and `max_completion_tokens` returned by Groq. | Groq catalogue models are imported as `chat` unless their ID indicates embeddings. |
+| SambaNova | `GET /v1/models` with `Authorization: Bearer` against the configured SambaNova base URL. | `context_length` and `max_completion_tokens` returned by SambaNova. | SambaNova catalogue models are imported as `chat` unless their ID indicates embeddings. |
+| Anthropic | `GET https://api.anthropic.com/v1/models` with `x-api-key` and `anthropic-version: 2023-06-01`. | Anthropic's list endpoint returns availability only, so the UI applies documented Claude family context and output limits. | All Anthropic list results are `chat`. |
+| Gemini | `GET https://generativelanguage.googleapis.com/v1beta/models?key=...`. | `inputTokenLimit` and `outputTokenLimit` returned by Gemini. | `supportedGenerationMethods` containing embedding methods, or an embedding model ID, becomes `embedding`; other importable models are `chat`. |
+| Mistral | `GET https://api.mistral.ai/v1/models` with `Authorization: Bearer`. | `max_context_length`; if no separate output cap is returned, `maxOutputTokens` falls back to the context length because Mistral constrains prompt plus output to the model context. | Capability metadata and model IDs identify embedding models; other models are `chat`. |
+| OpenRouter | `GET https://openrouter.ai/api/v1/models?output_modalities=all` with `Authorization: Bearer`. | `top_provider.context_length` and `top_provider.max_completion_tokens`, falling back to top-level fields. | Architecture output modalities and IDs identify embeddings; other text-output models are `chat`. |
+| OpenAI | `GET https://api.openai.com/v1/models` with `Authorization: Bearer`. | OpenAI's list endpoint returns only basic metadata, so recognized chat and embedding families are enriched from documented OpenAI model limits. Non-chat/non-embedding assets are skipped. | Embedding IDs become `embedding`; recognized GPT/o-series/open-weight IDs become `chat`. |
+| Morph | `GET https://api.morphllm.com/v1/models` with `Authorization: Bearer`. | Returned limit fields when present, otherwise Morph family defaults from the public model docs. | Morph embedding IDs become `embedding`; apply/general models are `chat`; rerank-only models are skipped. |
+
+The refresh request runs in the browser. If a provider blocks browser CORS for
+its model-list endpoint, the UI will show the provider error and leave the
+existing vault unchanged.
+
 ### Modern request (recommended)
 
 ```bash
@@ -175,7 +228,7 @@ curl -X POST https://ai-proxy.inet.pp.ua/openai/v1/chat/completions \
 ### Provider routing
 
 The proxy detects the provider using:
-1. **Path prefix** (priority): `/groq/`, `/sambanova/`, `/anthropic/`, `/openai/`, `/gemini/`
+1. **Path prefix** (priority): `/groq/`, `/sambanova/`, `/anthropic/`, `/openai/`, `/gemini/`, `/mistral/`, `/openrouter/`, `/morph/`
 2. **`X-Host-Final` header** (fallback): `api.groq.com`, `api.sambanova.ai`, etc.
 
 If neither can be determined, a 400 error is returned.
@@ -381,5 +434,3 @@ npm test
 AGPL-3.0-or-later
 
 Copyright © 2024-2026 Ronan LE MEILLAT
-
-
