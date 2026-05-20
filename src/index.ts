@@ -245,6 +245,42 @@ app.get('/', (c) => {
 });
 
 /**
+ * GET /v1/providers
+ *
+ * Lists all providers that have at least one non-expired API key.
+ * Requires a valid user Bearer token.
+ */
+app.get('/v1/providers', async (c) => {
+  const env = c.env;
+
+  const rateLimitResponse = await checkRateLimit(c.req.raw, env);
+  if (rateLimitResponse) return rateLimitResponse;
+
+  const bearerToken = extractBearerToken(c.req.header('Authorization') || null);
+  if (!bearerToken) {
+    return c.json({ error: 'Missing Authorization header' }, { status: 401 });
+  }
+
+  const username = await validateUserKey(env.KV_AI_PROXY, bearerToken);
+  if (!username) {
+    return c.json({ error: 'Invalid API key' }, { status: 403 });
+  }
+
+  let config: AiConfig;
+  try {
+    config = await getAiConfig(env);
+  } catch {
+    return c.json({ error: 'Configuration unavailable' }, { status: 500 });
+  }
+
+  const providers = Object.entries(config.providers)
+    .filter(([, provider]) => provider.keys.some((k) => k.type !== 'expired'))
+    .map(([id, provider]) => ({ id, object: 'provider', protocol: provider.protocol }));
+
+  return c.json({ object: 'list', data: providers });
+});
+
+/**
  * GET /:provider/v1/models
  *
  * Lists all models available for the given provider, in OpenAI-compatible format.

@@ -99,6 +99,24 @@ For development, keys are read from `users.json` if KV is empty.
 
 ## 📨 Usage
 
+### List available providers
+
+```bash
+curl https://ai-proxy.inet.pp.ua/v1/providers \
+  -H "Authorization: Bearer AGE-SECRET-KEY-..."
+```
+
+Returns only providers that have at least one non-expired API key:
+```json
+{
+  "object": "list",
+  "data": [
+    { "id": "groq", "object": "provider", "protocol": "openai" },
+    { "id": "anthropic", "object": "provider", "protocol": "anthropic" }
+  ]
+}
+```
+
 ### List available models
 
 ```bash
