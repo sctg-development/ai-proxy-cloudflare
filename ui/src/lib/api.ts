@@ -82,7 +82,7 @@ export const ApiService = {
     const token = this.getToken();
     if (!token) throw new Error('No authorization token found');
 
-    const response = await fetch('/ai.json.enc', {
+    const response = await fetch(`${import.meta.env.VAULT_URL}/ai.json.enc`, {
       method: 'PUT',
       headers: {
         'Authorization': `Bearer ${token}`,
