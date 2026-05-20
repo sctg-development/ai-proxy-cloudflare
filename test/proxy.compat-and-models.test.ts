@@ -4,7 +4,7 @@ import { env, SELF, reset } from 'cloudflare:test';
 import aiConfig from '../ai.json';
 import users from '../users.json';
 
-const AI_JSON_ENC_CACHE_KEY = 'cache:ai.json.enc';
+const AI_JSON_ENC_KV_KEY = 'vault:ai.json.enc';
 
 type UsersMap = Record<string, { key: string }>;
 type AiConfigType = typeof aiConfig;
@@ -98,9 +98,9 @@ describe('ai-proxy worker compatibility and model routing', () => {
     // Seed user validation dataset in KV
     await env.KV_AI_PROXY.put('users', JSON.stringify(usersMap));
 
-    // Seed encrypted ai.json.enc into KV cache to avoid network dependency
+    // Seed encrypted ai.json.enc into KV to avoid network dependency
     const encrypted = await encryptOpenSslAes256CbcBase64(JSON.stringify(aiConfig), cryptoToken);
-    await env.KV_AI_PROXY.put(AI_JSON_ENC_CACHE_KEY, encrypted, { expirationTtl: 3600 });
+    await env.KV_AI_PROXY.put(AI_JSON_ENC_KV_KEY, encrypted, { expirationTtl: 3600 });
   });
 
   beforeEach(() => {
