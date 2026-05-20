@@ -1,4 +1,4 @@
-# AI Proxy Cloudflare Worker v2.1
+# AI Proxy Cloudflare Worker v2.2
 
 Modern proxy to route API requests through the **Cloudflare AI Gateway**.
 
@@ -7,6 +7,7 @@ Modern proxy to route API requests through the **Cloudflare AI Gateway**.
 - ✅ **On-the-fly decryption** of `ai.json.enc` stored in KV
 - ✅ **User validation** using keys stored in KV (`users` key)
 - ✅ **Multi-provider routing** (Groq, SambaNova, Anthropic, OpenAI, Gemini)
+- ✅ **OpenAI-compatible `:provider/v1/models` endpoint** per provider
 - ✅ **Backward compatibility** with both legacy request formats
 - ✅ **Forwarding through Cloudflare AI Gateway** with automatic model ID prefixing
 - ✅ Optional **rate limiting** via Durable Objects
@@ -97,6 +98,28 @@ For development, keys are read from `users.json` if KV is empty.
 ---
 
 ## 📨 Usage
+
+### List available models
+
+```bash
+# List all models for a provider
+curl https://ai-proxy.inet.pp.ua/groq/v1/models \
+  -H "Authorization: Bearer AGE-SECRET-KEY-..."
+
+# Get a specific model
+curl https://ai-proxy.inet.pp.ua/groq/v1/models/llama-3.3-70b-versatile \
+  -H "Authorization: Bearer AGE-SECRET-KEY-..."
+```
+
+Response format (OpenAI-compatible):
+```json
+{
+  "object": "list",
+  "data": [
+    { "id": "llama-3.3-70b-versatile", "object": "model", "created": 0, "owned_by": "groq" }
+  ]
+}
+```
 
 ### Modern request (recommended)
 

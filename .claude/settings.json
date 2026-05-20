@@ -3,7 +3,8 @@
     "allow": [
       "Bash(xargs cat)",
       "Bash(npm install *)",
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Bash(npm test *)"
     ]
   }
 }
