@@ -105,6 +105,20 @@ describe('ai-proxy worker compatibility and model routing', () => {
     await env.KV_AI_PROXY.put(AI_JSON_ENC_KV_KEY, encrypted, { expirationTtl: 3600 });
   });
 
+  function makeSseStream(model: string): ReadableStream<Uint8Array> {
+    const encoder = new TextEncoder();
+    const chunks = [
+      `data: ${JSON.stringify({ id: 'chatcmpl-test', object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: { role: 'assistant', content: 'ok' }, finish_reason: null }] })}\n\n`,
+      'data: [DONE]\n\n',
+    ];
+    return new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+        controller.close();
+      },
+    });
+  }
+
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -118,6 +132,14 @@ describe('ai-proxy worker compatibility and model routing', () => {
       }
 
       const body = init?.body ? JSON.parse(String(init.body)) : {};
+
+      if (body.stream === true) {
+        return new Response(makeSseStream(body.model), {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      }
+
       return new Response(
         JSON.stringify({
           id: 'chatcmpl-test',
@@ -360,6 +382,73 @@ describe('ai-proxy worker compatibility and model routing', () => {
 
     expect(res.status).toBe(403);
     expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+
+  it('streams an SSE response when stream: true is sent to /:provider/v1/chat/completions', async () => {
+    const config = aiConfig as AiConfigType;
+    const [providerKey, provider] = Object.entries(config.providers).find(
+      ([, p]) => p.keys.some((k) => k.type !== 'expired'),
+    )!;
+    const model = provider.models.find((m) => m.usage === 'chat') ?? provider.models[0];
+
+    const req = new Request(`https://ai-proxy.inet.pp.ua/${providerKey}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${validUserToken}`,
+      },
+      body: JSON.stringify({
+        model: model.id,
+        messages: [{ role: 'user', content: 'Hello' }],
+        stream: true,
+      }),
+    });
+
+    const res = await SELF.fetch(req);
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('Content-Type')).toContain('text/event-stream');
+
+    const text = await res.text();
+    expect(text).toContain('data:');
+    expect(text).toContain('[DONE]');
+
+    // Verify stream: true was forwarded to the gateway
+    const gatewayCall = vi.mocked(globalThis.fetch).mock.calls[0];
+    const outboundBody = JSON.parse(String(gatewayCall[1]?.body));
+    expect(outboundBody.stream).toBe(true);
+  });
+
+
+  it('forwards stream_options to the gateway when stream: true', async () => {
+    const config = aiConfig as AiConfigType;
+    const [providerKey, provider] = Object.entries(config.providers).find(
+      ([, p]) => p.keys.some((k) => k.type !== 'expired'),
+    )!;
+    const model = provider.models.find((m) => m.usage === 'chat') ?? provider.models[0];
+
+    const req = new Request(`https://ai-proxy.inet.pp.ua/${providerKey}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${validUserToken}`,
+      },
+      body: JSON.stringify({
+        model: model.id,
+        messages: [{ role: 'user', content: 'Hello' }],
+        stream: true,
+        stream_options: { include_usage: true },
+      }),
+    });
+
+    const res = await SELF.fetch(req);
+    expect(res.status).toBe(200);
+
+    const gatewayCall = vi.mocked(globalThis.fetch).mock.calls[0];
+    const outboundBody = JSON.parse(String(gatewayCall[1]?.body));
+    expect(outboundBody.stream).toBe(true);
+    expect(outboundBody.stream_options).toEqual({ include_usage: true });
   });
 
   afterAll(() => {
