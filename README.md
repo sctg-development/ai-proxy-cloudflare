@@ -116,7 +116,15 @@ Response format (OpenAI-compatible):
 {
   "object": "list",
   "data": [
-    { "id": "llama-3.3-70b-versatile", "object": "model", "created": 0, "owned_by": "groq" }
+    {
+      "id": "llama-3.3-70b-versatile",
+      "object": "model",
+      "created": 0,
+      "owned_by": "groq",
+      "context_window": 8192,
+      "context_length": 8192,
+      "max_completion_tokens": 2048
+    }
   ]
 }
 ```

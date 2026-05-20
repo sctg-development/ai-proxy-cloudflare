@@ -286,6 +286,9 @@ app.get('/:provider/v1/models', async (c) => {
       object: 'model',
       created: 0,
       owned_by: providerKey,
+      context_window: model.contextWindow,
+      context_length: model.contextWindow,
+      max_completion_tokens: model.maxOutputTokens,
     })),
   });
 });
@@ -336,6 +339,9 @@ app.get('/:provider/v1/models/:modelId', async (c) => {
     object: 'model',
     created: 0,
     owned_by: providerKey,
+    context_window: model.contextWindow,
+    context_length: model.contextWindow,
+    max_completion_tokens: model.maxOutputTokens,
   });
 });
 
