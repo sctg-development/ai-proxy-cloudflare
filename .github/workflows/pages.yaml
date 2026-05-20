@@ -21,7 +21,7 @@ on:
     branches:
       - main
     paths:
-      - apps/client/**
+      - ui/**
       - package-lock.json
       - .github/workflows/pages.yaml
 
