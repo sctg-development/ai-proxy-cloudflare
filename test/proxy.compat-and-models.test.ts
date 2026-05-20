@@ -11,29 +11,44 @@ const AI_JSON_ENC_KV_KEY = 'vault:ai.json.enc';
 type UsersMap = Record<string, { key: string }>;
 type AiConfigType = typeof aiConfig;
 
+/**
+ * Converts a Uint8Array of bytes to a base64-encoded string.
+ * Uses chunked processing to handle large arrays efficiently.
+ */
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = '';
-  const chunkSize = 0x8000;
+  const chunkSize = 0x8000; // 32KB chunks for efficient processing
   for (let i = 0; i < bytes.length; i += chunkSize) {
     binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
   }
   return btoa(binary);
 }
 
+/**
+ * Encrypts plaintext using OpenSSL-compatible AES-256-CBC encryption with PBKDF2 key derivation.
+ * This mimics the encryption format used by OpenSSL's `enc -aes-256-cbc -pbkdf2 -md sha256 -a`.
+ * 
+ * @param plaintext - The text to encrypt
+ * @param password - The password for key derivation
+ * @returns Base64-encoded encrypted data with "Salted__" header
+ */
 async function encryptOpenSslAes256CbcBase64(plaintext: string, password: string): Promise<string> {
   const encoder = new TextEncoder();
+  // Generate random 8-byte salt as required by OpenSSL format
   const salt = crypto.getRandomValues(new Uint8Array(8));
 
+  // Derive key material using PBKDF2 with SHA-256
   const pwBytes = encoder.encode(password);
   const baseKey = await crypto.subtle.importKey('raw', pwBytes, 'PBKDF2', false, ['deriveBits']);
   const derived = new Uint8Array(
     await crypto.subtle.deriveBits(
       { name: 'PBKDF2', hash: 'SHA-256', salt, iterations: 100_000 },
       baseKey,
-      384,
+      384, // 32 bytes for AES key + 16 bytes for IV = 48 bytes = 384 bits
     ),
   );
 
+  // First 32 bytes are the AES key, next 16 bytes are the IV
   const aesKey = await crypto.subtle.importKey('raw', derived.slice(0, 32), 'AES-CBC', false, ['encrypt']);
   const ciphertext = new Uint8Array(
     await crypto.subtle.encrypt(
@@ -43,6 +58,7 @@ async function encryptOpenSslAes256CbcBase64(plaintext: string, password: string
     ),
   );
 
+  // Build OpenSSL-compatible format: "Salted__" + salt + ciphertext
   const header = new TextEncoder().encode('Salted__');
   const raw = new Uint8Array(header.length + salt.length + ciphertext.length);
   raw.set(header, 0);
@@ -52,6 +68,10 @@ async function encryptOpenSslAes256CbcBase64(plaintext: string, password: string
   return bytesToBase64(raw);
 }
 
+/**
+ * Builds a legacy request body for compatibility testing.
+ * Uses the old OpenAI API format with specific model name.
+ */
 function buildLegacyBody(model: string) {
   return {
     messages: [
@@ -67,16 +87,31 @@ function buildLegacyBody(model: string) {
   };
 }
 
+/**
+ * Checks if a provider has at least one non-expired API key.
+ * 
+ * @param provider - The provider configuration from ai.json
+ * @returns true if provider has at least one active (non-expired) key
+ */
 function hasNonExpiredKey(provider: AiConfigType['providers'][string]) {
   return provider.keys.some((key) => key.type !== 'expired');
 }
 
+/**
+ * Selects the chat model with the lowest priority value from a provider's model list.
+ * Lower priority numbers indicate higher priority (0 = highest priority).
+ * 
+ * @param provider - The provider configuration from ai.json
+ * @returns The chat model with lowest priority, or null if no chat models exist
+ */
 function selectLowestPriorityChatModel(provider: AiConfigType['providers'][string]) {
   const chatModels = provider.models.filter((model) => model.usage === 'chat');
   if (chatModels.length === 0) {
     return null;
   }
 
+  // Sort by priority ascending (lower number = higher priority)
+  // Return the last item (lowest priority/highest number)
   return [...chatModels].sort((left, right) => left.priority - right.priority)[0];
 }
 
@@ -101,10 +136,15 @@ describe('ai-proxy worker compatibility and model routing', () => {
     await env.KV_AI_PROXY.put('users', JSON.stringify(usersMap));
 
     // Seed encrypted ai.json.enc into KV to avoid network dependency
+    // This simulates the production setup where ai.json is encrypted in KV
     const encrypted = await encryptOpenSslAes256CbcBase64(JSON.stringify(aiConfig), cryptoToken);
     await env.KV_AI_PROXY.put(AI_JSON_ENC_KV_KEY, encrypted, { expirationTtl: 3600 });
   });
 
+  /**
+   * Creates a mock Server-Sent Events (SSE) stream for testing streaming responses.
+   * Simulates a typical AI API streaming response with a completion chunk and DONE marker.
+   */
   function makeSseStream(model: string): ReadableStream<Uint8Array> {
     const encoder = new TextEncoder();
     const chunks = [
@@ -121,9 +161,11 @@ describe('ai-proxy worker compatibility and model routing', () => {
 
   beforeEach(() => {
     vi.restoreAllMocks();
+    // Mock global fetch to intercept outbound requests to Cloudflare AI Gateway
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
 
+      // Ensure all outbound requests go to the expected AI Gateway
       if (!url.startsWith('https://gateway.ai.cloudflare.com/')) {
         return new Response(JSON.stringify({ error: `unexpected outbound URL: ${url}` }), {
           status: 500,
@@ -133,6 +175,7 @@ describe('ai-proxy worker compatibility and model routing', () => {
 
       const body = init?.body ? JSON.parse(String(init.body)) : {};
 
+      // Handle streaming responses
       if (body.stream === true) {
         return new Response(makeSseStream(body.model), {
           status: 200,
@@ -140,6 +183,7 @@ describe('ai-proxy worker compatibility and model routing', () => {
         });
       }
 
+      // Handle non-streaming responses
       return new Response(
         JSON.stringify({
           id: 'chatcmpl-test',
@@ -152,8 +196,7 @@ describe('ai-proxy worker compatibility and model routing', () => {
     }));
   });
 
-
-  it('maintains compatibility with /openai/v1/chat/completions (X-Host-Final: api.groq.com)', async () => {
+  it('reste compatible avec /openai/v1/chat/completions (X-Host-Final: api.groq.com)', async () => {
     const req = new Request('https://ai-proxy.inet.pp.ua/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -173,13 +216,14 @@ describe('ai-proxy worker compatibility and model routing', () => {
     const outboundUrl = String(gatewayCall[0]);
     const outboundBody = JSON.parse(String(gatewayCall[1]?.body));
 
+    // Verify the request is routed to the correct gateway endpoint
     expect(outboundUrl).toContain('/v1/');
     expect(outboundUrl).toContain('/compat/chat/completions');
+    // Verify model name is prefixed with provider for gateway routing
     expect(outboundBody.model).toBe('groq/meta-llama/llama-4-scout-17b-16e-instruct');
   });
 
-
-  it('maintains compatibility with /v1/chat/completions (X-Host-Final: api.sambanova.ai)', async () => {
+  it('reste compatible avec /v1/chat/completions (X-Host-Final: api.sambanova.ai)', async () => {
     const req = new Request('https://ai-proxy.inet.pp.ua/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -198,13 +242,14 @@ describe('ai-proxy worker compatibility and model routing', () => {
     const gatewayCall = vi.mocked(globalThis.fetch).mock.calls[0];
     const outboundBody = JSON.parse(String(gatewayCall[1]?.body));
 
+    // Verify model is prefixed with custom-sambanova/ for gateway routing
     expect(outboundBody.model).toBe('custom-sambanova/Meta-Llama-3.3-70B-Instruct');
   });
 
-
-  it('routes all declared models in ai.json via the gateway with provider prefix', async () => {
+  it('route tous les modèles déclarés dans ai.json via la gateway avec préfixe provider', async () => {
     const config = aiConfig as AiConfigType;
 
+    // Test every model in every provider to ensure proper routing
     for (const [providerKey, provider] of Object.entries(config.providers)) {
       for (const model of provider.models) {
         vi.mocked(globalThis.fetch).mockClear();
@@ -231,6 +276,7 @@ describe('ai-proxy worker compatibility and model routing', () => {
         const gatewayCall = vi.mocked(globalThis.fetch).mock.calls[0];
         const outboundUrl = String(gatewayCall[0]);
         const outboundBody = JSON.parse(String(gatewayCall[1]?.body));
+        // Ensure model ID is properly prefixed with provider's gateway prefix
         const expectedModel = model.id.startsWith(`${provider.gatewayModelPrefix}/`)
           ? model.id
           : `${provider.gatewayModelPrefix}/${model.id}`;
@@ -241,18 +287,18 @@ describe('ai-proxy worker compatibility and model routing', () => {
     }
   });
 
-
-  it('queries the lowest priority chat model for each provider with non-expired keys', async () => {
+  it('interroge le modèle de chat à priorité minimale pour chaque provider avec clés non expirées', async () => {
     const config = aiConfig as AiConfigType;
 
+    // Test the lowest priority chat model for each provider with active keys
     for (const [providerKey, provider] of Object.entries(config.providers)) {
       if (!hasNonExpiredKey(provider)) {
-        continue;
+        continue; // Skip providers with only expired keys
       }
 
       const model = selectLowestPriorityChatModel(provider);
       if (!model) {
-        continue;
+        continue; // Skip providers without chat models
       }
 
       vi.mocked(globalThis.fetch).mockClear();
@@ -289,9 +335,9 @@ describe('ai-proxy worker compatibility and model routing', () => {
     }
   });
 
-
-  it('lists providers with at least one non-expired key via /v1/providers', async () => {
+  it('liste les providers avec au moins une clé non expirée via /v1/providers', async () => {
     const config = aiConfig as AiConfigType;
+    // Build expected provider list: only providers with at least one non-expired key
     const expectedProviders = Object.entries(config.providers)
       .filter(([, provider]) => provider.keys.some((key) => key.type !== 'expired'))
       .map(([id, provider]) => ({ id, object: 'provider', protocol: provider.protocol }));
@@ -310,17 +356,17 @@ describe('ai-proxy worker compatibility and model routing', () => {
     expect(payload).toEqual({ object: 'list', data: expectedProviders });
   });
 
-
-  it('returns OpenAI-compatible models for a provider via /:provider/v1/models', async () => {
+  it('retourne les modèles OpenAI-compatibles pour un provider via /:provider/v1/models', async () => {
     const config = aiConfig as AiConfigType;
     const [providerKey, provider] = Object.entries(config.providers)[0];
+    // Build OpenAI-compatible model list response
     const expectedModels = provider.models.map((model) => ({
       id: model.id,
       object: 'model',
-      created: 0,
+      created: 0, // Hardcoded timestamp for compatibility
       owned_by: providerKey,
       context_window: model.contextWindow,
-      context_length: model.contextWindow,
+      context_length: model.contextWindow, // Duplicate for compatibility
       max_completion_tokens: model.maxOutputTokens,
     }));
 
@@ -338,8 +384,7 @@ describe('ai-proxy worker compatibility and model routing', () => {
     expect(payload).toEqual({ object: 'list', data: expectedModels });
   });
 
-
-  it('returns model metadata via /:provider/v1/models/:modelId', async () => {
+  it('retourne les métadonnées du modèle via /:provider/v1/models/:modelId', async () => {
     const config = aiConfig as AiConfigType;
     const [providerKey, provider] = Object.entries(config.providers)[0];
     const model = provider.models[0];
@@ -366,8 +411,7 @@ describe('ai-proxy worker compatibility and model routing', () => {
     });
   });
 
-
-  it('rejects an invalid user key', async () => {
+  it('refuse une clé utilisateur invalide', async () => {
     const req = new Request('https://ai-proxy.inet.pp.ua/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -384,12 +428,13 @@ describe('ai-proxy worker compatibility and model routing', () => {
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
-
   it('streams an SSE response when stream: true is sent to /:provider/v1/chat/completions', async () => {
     const config = aiConfig as AiConfigType;
+    // Find first provider with non-expired keys
     const [providerKey, provider] = Object.entries(config.providers).find(
       ([, p]) => p.keys.some((k) => k.type !== 'expired'),
     )!;
+    // Prefer chat models, fall back to any model
     const model = provider.models.find((m) => m.usage === 'chat') ?? provider.models[0];
 
     const req = new Request(`https://ai-proxy.inet.pp.ua/${providerKey}/v1/chat/completions`, {
@@ -420,12 +465,13 @@ describe('ai-proxy worker compatibility and model routing', () => {
     expect(outboundBody.stream).toBe(true);
   });
 
-
   it('forwards stream_options to the gateway when stream: true', async () => {
     const config = aiConfig as AiConfigType;
+    // Find first provider with non-expired keys
     const [providerKey, provider] = Object.entries(config.providers).find(
       ([, p]) => p.keys.some((k) => k.type !== 'expired'),
     )!;
+    // Prefer chat models, fall back to any model
     const model = provider.models.find((m) => m.usage === 'chat') ?? provider.models[0];
 
     const req = new Request(`https://ai-proxy.inet.pp.ua/${providerKey}/v1/chat/completions`, {
