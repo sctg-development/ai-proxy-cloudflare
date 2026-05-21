@@ -24,9 +24,11 @@ import {
   Label,
   ListBox,
   NumberField,
+  ProgressBar,
   Select,
   Slider,
   TextArea,
+  Tooltip,
 } from '@heroui/react';
 import {
   Code2,
@@ -99,6 +101,24 @@ export const PlaygroundPanel: React.FC<PlaygroundPanelProps> = ({ config }) => {
   const usableKeys = provider
     ? provider.keys.filter((apiKey) => apiKey.key.trim().length > 0)
     : [];
+
+  const activeModel = chatModels.find((model) => model.id === modelId);
+  const contextWindowTokens = Math.max(activeModel?.contextWindow ?? 1, 1);
+
+  const estimateTokens = (text: string) => Math.ceil(text.length / 4);
+  const contextMessages = resumeFromIndex === null
+    ? messages
+    : messages.slice(0, resumeFromIndex + 1);
+  const contextPromptTokens = contextMessages.reduce((total, message) => total + estimateTokens(message.content), 0);
+  const contextSystemTokens = systemPrompt.trim().length > 0 ? estimateTokens(systemPrompt) : 0;
+  const contextDraftPromptTokens = userPrompt.trim().length > 0 ? estimateTokens(userPrompt) : 0;
+  const contextUsedTokens = contextSystemTokens + contextPromptTokens + contextDraftPromptTokens;
+  const contextFillPercent = Math.min(100, Math.max(0, (contextUsedTokens / contextWindowTokens) * 100));
+  const contextFillColor = contextFillPercent >= 90
+    ? 'danger'
+    : contextFillPercent >= 70
+      ? 'warning'
+      : 'accent';
 
   /**
    * Effect: Ensure a valid provider is selected when the config changes.
@@ -669,7 +689,22 @@ export const PlaygroundPanel: React.FC<PlaygroundPanelProps> = ({ config }) => {
                 onChange={(event) => setUserPrompt(event.target.value)}
                 placeholder="Ask something..."
               />
-              <div className="flex justify-end">
+              <div className="flex items-end justify-between gap-3">
+                <Tooltip delay={0}>
+                  <Tooltip.Trigger aria-label="Context usage details" className="w-full max-w-xs">
+                    <ProgressBar aria-label="Context usage" className="w-full" color={contextFillColor} value={contextFillPercent}>
+                      <Label>Context</Label>
+                      <ProgressBar.Output />
+                      <ProgressBar.Track>
+                        <ProgressBar.Fill />
+                      </ProgressBar.Track>
+                    </ProgressBar>
+                  </Tooltip.Trigger>
+                  <Tooltip.Content showArrow placement="top">
+                    <Tooltip.Arrow />
+                    {`${contextUsedTokens.toLocaleString()} / ${contextWindowTokens.toLocaleString()} tokens`}
+                  </Tooltip.Content>
+                </Tooltip>
                 <Button onPress={sendPrompt} isPending={isSending} isDisabled={!providerId || !modelId}>
                   <Send className="mr-2 h-4 w-4" />
                   Send
