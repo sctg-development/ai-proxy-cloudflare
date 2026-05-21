@@ -166,8 +166,30 @@ const getFileExtension = (language: string): string => ({
   yml: 'yml',
 }[language.toLowerCase()] ?? 'txt');
 
+const makeUniqueFilename = (filename: string, usedNames: Set<string>): string => {
+  if (!usedNames.has(filename)) {
+    usedNames.add(filename);
+    return filename;
+  }
+
+  const dotIndex = filename.lastIndexOf('.');
+  const basename = dotIndex > 0 ? filename.slice(0, dotIndex) : filename;
+  const extension = dotIndex > 0 ? filename.slice(dotIndex) : '';
+  let suffix = 2;
+  let candidate = `${basename}-${suffix}${extension}`;
+
+  while (usedNames.has(candidate)) {
+    suffix += 1;
+    candidate = `${basename}-${suffix}${extension}`;
+  }
+
+  usedNames.add(candidate);
+  return candidate;
+};
+
 const extractGeneratedFiles = (content: string) => {
   const files: Array<{ name: string; content: string }> = [];
+  const usedNames = new Set<string>();
   const fencePattern = /```([^\n`]*)\n([\s\S]*?)```/g;
   let match: RegExpExecArray | null;
   let index = 0;
@@ -176,18 +198,20 @@ const extractGeneratedFiles = (content: string) => {
     const info = match[1]?.trim() ?? '';
     const code = match[2] ?? '';
     const filename = info.match(/(?:file(?:name)?|path|title)=["']?([^"'\s]+)["']?/i)?.[1];
-    if (filename) {
-      files.push({ name: filename, content: code.replace(/\n$/, '') });
-      continue;
-    }
+    const language = info.split(/\s+/)[0] || 'txt';
 
-    if (files.length === 0 && index === 0) {
-      const language = info.split(/\s+/)[0] || 'txt';
+    if (filename) {
       files.push({
-        name: `generated.${getFileExtension(language)}`,
+        name: makeUniqueFilename(filename, usedNames),
+        content: code.replace(/\n$/, ''),
+      });
+    } else {
+      files.push({
+        name: makeUniqueFilename(`generated-${index + 1}.${getFileExtension(language)}`, usedNames),
         content: code.replace(/\n$/, ''),
       });
     }
+
     index += 1;
   }
 
@@ -298,12 +322,14 @@ export const PlaygroundPanel: React.FC<PlaygroundPanelProps> = ({ config }) => {
   }, [usableKeys, selectedKey]);
 
   /**
-   * Ensures the provider endpoint ends with the standard OpenAI chat completions suffix.
+   * Ensures the provider endpoint ends with the standard chat completions suffix.
    */
   const buildDirectChatUrl = (activeProvider: AiProvider): string => {
     const base = activeProvider.endpoint.replace(/\/+$/, '');
     if (base.endsWith('/chat/completions')) return base;
-    if (base.endsWith('/v1')) return `${base}/chat/completions`;
+    if (/(?:\/v\d+(?:beta\d*)?)$/i.test(base)) {
+      return `${base}/chat/completions`;
+    }
     return `${base}/v1/chat/completions`;
   };
 
