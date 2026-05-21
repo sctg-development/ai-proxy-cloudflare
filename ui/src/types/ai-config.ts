@@ -68,6 +68,8 @@ export interface AiProvider {
   keys: AiKey[];
   /** List of available models for this provider */
   models: AiModel[];
+  /** Optional model card endpoint */
+  modelCardEndpoint?: string;
 }
 
 /**

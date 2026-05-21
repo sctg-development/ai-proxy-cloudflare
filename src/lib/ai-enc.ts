@@ -37,6 +37,7 @@ export interface AiProvider {
   gatewayEndpoint?: string;
   gatewayModelPrefix?: string;
   gatewayKey?: string;
+  modelCardEndpoint?: string;
   keys: AiKey[];
   models: AiModel[];
 }

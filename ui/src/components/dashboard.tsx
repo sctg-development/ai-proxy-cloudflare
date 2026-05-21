@@ -554,6 +554,12 @@ interface ProviderCardProps {
   onReorderModels: (models: AiModel[]) => void;
 }
 
+/** Backward-compatible read for legacy snake_case provider field. */
+const getProviderModelCardEndpoint = (provider: AiProvider): string | undefined => {
+  const providerWithLegacy = provider as AiProvider & { model_card_endpoint?: string };
+  return provider.modelCardEndpoint ?? providerWithLegacy.model_card_endpoint;
+};
+
 /**
  * Card component that renders a single AI provider with its models and keys
  * in nested tabs.
@@ -580,6 +586,8 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
   modelSyncMessage,
   onReorderModels,
 }) => {
+  const resolvedModelCardEndpoint = getProviderModelCardEndpoint(provider);
+
   return (
     <Card className="overflow-hidden border-l-4 border-l-primary">
       {/* ── Provider header ──────────────────────────────────────────────── */}
@@ -595,6 +603,11 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
           <Card.Description className="font-mono text-xs">
             {provider.endpoint}
           </Card.Description>
+          {resolvedModelCardEndpoint && (
+            <Card.Description className="font-mono text-xs text-primary">
+              Model cards: {resolvedModelCardEndpoint}
+            </Card.Description>
+          )}
         </div>
         <div className="flex gap-2">
           <Button isIconOnly size="sm" variant="ghost" onPress={onEdit} aria-label="Edit provider">
@@ -662,6 +675,7 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
             <ModelPriorityList
               providerId={id}
               models={provider.models}
+              modelCardEndpoint={resolvedModelCardEndpoint}
               onEditModel={onEditModel}
               onDeleteModel={onDeleteModel}
               onDeleteSelectedModels={onDeleteSelectedModels}
@@ -743,6 +757,8 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
 interface ModelPriorityListProps {
   /** Provider identifier used for accessible labels. */
   providerId: string;
+  /** Optional model card endpoint for opening model documentation. */
+  modelCardEndpoint?: string;
   /** Models in their current visual and priority order. */
   models: AiModel[];
   /** Opens the existing model edit modal. */
@@ -765,6 +781,7 @@ interface ModelPriorityListProps {
  */
 const ModelPriorityList: React.FC<ModelPriorityListProps> = ({
   providerId,
+  modelCardEndpoint,
   models,
   onEditModel,
   onDeleteModel,
@@ -776,6 +793,17 @@ const ModelPriorityList: React.FC<ModelPriorityListProps> = ({
 
   /** Row currently hovered as a drop target, used only for visual feedback. */
   const [dropIndex, setDropIndex] = useState<number | null>(null);
+
+  const buildModelCardUrl = (modelId: string) => {
+    if (!modelCardEndpoint) return '';
+    const endpoint = modelCardEndpoint.trim();
+    if (!endpoint) return '';
+    if (endpoint.includes('{model}')) {
+      return endpoint.split('{model}').join(encodeURIComponent(modelId));
+    }
+    const trimmedBase = endpoint.replace(/\/+$/, '');
+    return `${trimmedBase}/${encodeURIComponent(modelId)}`;
+  };
 
   /** Model IDs checked for a batch delete operation. */
   const [selectedModelIds, setSelectedModelIds] = useState<Set<string>>(new Set());
@@ -917,7 +945,22 @@ const ModelPriorityList: React.FC<ModelPriorityListProps> = ({
               />
             </div>
             <div role="cell" className="min-w-0 font-medium">
-              <span className="block truncate" title={model.id}>{model.id}</span>
+              {modelCardEndpoint ? (
+                <a
+                  href={buildModelCardUrl(model.id)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  draggable={false}
+                  className="block truncate text-primary underline-offset-2 hover:underline"
+                  title={`Open model card for ${model.id}`}
+                  onMouseDown={(event) => event.stopPropagation()}
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  {model.id}
+                </a>
+              ) : (
+                <span className="block truncate" title={model.id}>{model.id}</span>
+              )}
             </div>
             <div role="cell">
               <Chip size="sm" variant="soft" color={model.usage === 'embedding' ? 'accent' : 'default'}>
@@ -1004,6 +1047,10 @@ const ConfigModal: React.FC<ConfigModalProps> = ({
 
     if (type === 'provider') {
       if (fieldName === 'id') return editTarget.providerId;
+      if (fieldName === 'modelCardEndpoint') {
+        const providerWithLegacy = provider as AiProvider & { model_card_endpoint?: string };
+        return String(provider.modelCardEndpoint ?? providerWithLegacy.model_card_endpoint ?? '');
+      }
       // Cast via unknown to safely index by string key — values come from known provider fields.
       return String(((provider as unknown) as Record<string, unknown>)[fieldName] ?? '');
     }
@@ -1037,6 +1084,7 @@ const ConfigModal: React.FC<ConfigModalProps> = ({
         endpoint: data.endpoint,
         gatewayEndpoint: data.gatewayEndpoint || undefined,
         gatewayModelPrefix: data.gatewayModelPrefix || undefined,
+        modelCardEndpoint: data.modelCardEndpoint || undefined,
         // Preserve existing keys/models when renaming or editing a provider.
         keys: editTarget ? newConfig.providers[editTarget.providerId].keys : [],
         models: editTarget
@@ -1147,6 +1195,14 @@ const ConfigModal: React.FC<ConfigModalProps> = ({
                     >
                       <Label>CF Gateway Model Prefix (optional)</Label>
                       <Input placeholder="@cf/openai/" />
+                    </TextField>
+
+                    <TextField
+                      name="modelCardEndpoint"
+                      defaultValue={getInitialValue('modelCardEndpoint')}
+                    >
+                      <Label>Model Card Endpoint (optional)</Label>
+                      <Input placeholder="https://platform.openai.com/models/{model}" />
                     </TextField>
                   </>
                 )}
