@@ -207,6 +207,12 @@ app.put('/ai.json.enc', async (c) => {
  * Authentication is performed by decrypting the vault with the Bearer token
  * provided in the Authorization header. Only a correct token (i.e. the original
  * encryption password) will result in a successful decryption.
+ * 
+ * It can be used for example in a bash script like this:
+ * 
+ * ```bash
+ * AI_JSON_CRYPTOKEN=04……9 curl -H "Authorization: Bearer $AI_JSON_CRYPTOKEN" "https://ai-proxy.inet.pp.ua/ai.json" | jq .
+ * ```
  */
 app.get('/ai.json', async (c) => {
   const authHeader = c.req.header('Authorization');
