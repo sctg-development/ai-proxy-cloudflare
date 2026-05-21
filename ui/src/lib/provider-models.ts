@@ -54,6 +54,7 @@ export async function discoverProviderModels(
   provider: AiProvider,
   apiKey: string,
   previousModels: AiModel[],
+  freeOnly = false,
 ): Promise<ProviderModelDiscoveryResult> {
   const knownProvider = canonicalProviderId(providerId, provider);
 
@@ -65,7 +66,7 @@ export async function discoverProviderModels(
     case 'mistral':
       return withStablePriority(await fetchMistralModels(provider, apiKey), previousModels);
     case 'openrouter':
-      return withStablePriority(await fetchOpenRouterModels(provider, apiKey), previousModels);
+      return withStablePriority(await fetchOpenRouterModels(provider, apiKey, freeOnly), previousModels);
     case 'openai':
       return withStablePriority(await fetchOpenAiModels(provider, apiKey), previousModels);
     case 'morph':
@@ -344,6 +345,7 @@ async function fetchMistralModels(
 async function fetchOpenRouterModels(
   provider: AiProvider,
   apiKey: string,
+  freeOnly = false,
 ): Promise<ProviderModelDiscoveryResult> {
   const url = modelsUrl(provider, 'https://openrouter.ai/api/v1');
   url.searchParams.set('output_modalities', 'all');
@@ -352,23 +354,29 @@ async function fetchOpenRouterModels(
     { headers: { Authorization: `Bearer ${apiKey}` } },
     'openrouter',
   );
-  const models = arrayFromData(payload).map((item) => {
-    const id = stringField(item, 'id');
-    const topProvider = recordField(item, 'top_provider');
-    const architecture = recordField(item, 'architecture');
-    const usage = inferOpenRouterUsage(item, architecture);
-    const contextWindow =
-      numberField(topProvider, 'context_length') ?? numberField(item, 'context_length') ?? 0;
-    const maxOutputTokens =
-      usage === 'embedding'
-        ? 0
-        : numberField(topProvider, 'max_completion_tokens') ??
-          numberField(item, 'max_completion_tokens') ??
-          contextWindow;
-    return model(id, usage, contextWindow, maxOutputTokens, null);
-  });
+  const models = arrayFromData(payload)
+    .filter((item) => {
+      if (!freeOnly) return true;
+      const id = stringField(item, 'id');
+      return id.includes(':free');
+    })
+    .map((item) => {
+      const id = stringField(item, 'id');
+      const topProvider = recordField(item, 'top_provider');
+      const architecture = recordField(item, 'architecture');
+      const usage = inferOpenRouterUsage(item, architecture);
+      const contextWindow =
+        numberField(topProvider, 'context_length') ?? numberField(item, 'context_length') ?? 0;
+      const maxOutputTokens =
+        usage === 'embedding'
+          ? 0
+          : numberField(topProvider, 'max_completion_tokens') ??
+            numberField(item, 'max_completion_tokens') ??
+            contextWindow;
+      return model(id, usage, contextWindow, maxOutputTokens, null);
+    });
 
-  return { models, notes: [] };
+  return { models, notes: freeOnly ? ['Seuls les modèles avec ":free" dans le nom ont été synchronisés.'] : [] };
 }
 
 /**

@@ -208,7 +208,7 @@ export const Dashboard: React.FC = () => {
     if (!usableKey) {
       setModelSyncMessages((messages) => ({
         ...messages,
-        [id]: 'Aucune clé non expirée disponible pour interroger ce provider.',
+        [id]: 'No non-expired key available to query this provider.',
       }));
       return;
     }
@@ -216,7 +216,7 @@ export const Dashboard: React.FC = () => {
     setSyncingProviderId(id);
     setModelSyncMessages((messages) => ({
       ...messages,
-      [id]: `Interrogation avec la clé ${maskApiKey(usableKey.key)}…`,
+      [id]: `Querying with key ${maskApiKey(usableKey.key)}…`,
     }));
 
     try {
@@ -224,7 +224,7 @@ export const Dashboard: React.FC = () => {
       if (result.models.length === 0) {
         setModelSyncMessages((messages) => ({
           ...messages,
-          [id]: 'Aucun modèle chat ou embedding exploitable trouvé dans la réponse API.',
+          [id]: 'No usable chat or embedding models found in the API response.',
         }));
         return;
       }
@@ -235,14 +235,67 @@ export const Dashboard: React.FC = () => {
       setModelSyncMessages((messages) => ({
         ...messages,
         [id]: [
-          `${result.models.length} modèle(s) synchronisé(s).`,
+          `${result.models.length} model(s) synchronized.`,
           ...result.notes,
         ].join(' '),
       }));
     } catch (err) {
       setModelSyncMessages((messages) => ({
         ...messages,
-        [id]: err instanceof Error ? err.message : 'Synchronisation des modèles impossible.',
+        [id]: err instanceof Error ? err.message : 'Unable to synchronize models.',
+      }));
+    } finally {
+      setSyncingProviderId(null);
+    }
+  };
+
+  /**
+   * Refreshes only the free models (with ":free" in the name) for OpenRouter.
+   * Uses the same flow as refreshProviderModels but with the freeOnly flag.
+   */
+  const refreshProviderFreeModels = async (id: string) => {
+    if (!activeConfig) return;
+
+    const provider = activeConfig.providers[id];
+    const usableKey = provider.keys.find((apiKey) => apiKey.type !== 'expired');
+    if (!usableKey) {
+      setModelSyncMessages((messages) => ({
+        ...messages,
+        [id]: 'No non-expired key available to query this provider.',
+      }));
+      return;
+    }
+
+    setSyncingProviderId(id);
+    setModelSyncMessages((messages) => ({
+      ...messages,
+      [id]: `Querying free models with key ${maskApiKey(usableKey.key)}…`,
+    }));
+
+    try {
+      const result = await discoverProviderModels(id, provider, usableKey.key, provider.models, true);
+      if (result.models.length === 0) {
+        setModelSyncMessages((messages) => ({
+          ...messages,
+          [id]: 'No free models (":free") found in the API response.',
+        }));
+        return;
+      }
+
+      const newConfig: AiConfig = JSON.parse(JSON.stringify(activeConfig));
+      newConfig.providers[id].models = result.models;
+      stageConfig(newConfig);
+      setModelSyncMessages((messages) => ({
+        ...messages,
+        [id]: [
+          `${result.models.length} free model(s) synchronized.`,
+          ...result.notes,
+        ].join(' '),
+      }));
+    } catch (err) {
+      setModelSyncMessages((messages) => ({
+        ...messages,
+        [id]: err instanceof Error ? err.message : 'Unable to synchronize free models.',
       }));
     } finally {
       setSyncingProviderId(null);
@@ -437,6 +490,7 @@ export const Dashboard: React.FC = () => {
                   }}
                   onDeleteSelectedModels={(modelIds) => deleteProviderModels(id, modelIds)}
                   onRefreshModels={() => refreshProviderModels(id)}
+                  onRefreshFreeModels={() => refreshProviderFreeModels(id)}
                   canRefreshModels={canDiscoverProviderModels(id, provider)}
                   isRefreshingModels={syncingProviderId === id}
                   modelSyncMessage={modelSyncMessages[id]}
@@ -488,6 +542,8 @@ interface ProviderCardProps {
   onDeleteSelectedModels: (ids: string[]) => void;
   /** Called when the user asks the UI to reload models from the provider API. */
   onRefreshModels: () => void;
+  /** Called when the user asks to reload only free models (OpenRouter only). */
+  onRefreshFreeModels?: () => void;
   /** Whether this provider has a known upstream model-list API implementation. */
   canRefreshModels: boolean;
   /** Whether the upstream model-list request is in flight. */
@@ -518,6 +574,7 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
   onDeleteModel,
   onDeleteSelectedModels,
   onRefreshModels,
+  onRefreshFreeModels,
   canRefreshModels,
   isRefreshingModels,
   modelSyncMessage,
@@ -582,6 +639,18 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
                 <DownloadCloud className="mr-2 h-3.5 w-3.5" />
                 Refresh from API
               </Button>
+              {id === 'openrouter' && onRefreshFreeModels && (
+                <Button
+                  size="sm"
+                  variant="tertiary"
+                  onPress={onRefreshFreeModels}
+                  isPending={isRefreshingModels}
+                  isDisabled={!canRefreshModels || provider.keys.every((apiKey) => apiKey.type === 'expired')}
+                >
+                  <DownloadCloud className="mr-2 h-3.5 w-3.5" />
+                  Refresh free from API
+                </Button>
+              )}
               <Button size="sm" variant="tertiary" onPress={onAddModel}>
                 <Plus className="mr-2 h-3.5 w-3.5" />
                 Add Model
@@ -1187,3 +1256,5 @@ const ConfigModal: React.FC<ConfigModalProps> = ({
     </Modal>
   );
 };
+
+
