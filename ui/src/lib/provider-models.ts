@@ -264,7 +264,7 @@ async function fetchAnthropicModels(
   return {
     models,
     notes: [
-      'Anthropic ne renvoie pas les limites dans /v1/models; les limites viennent de la table officielle des familles Claude.',
+      'Anthropic does not return limits in /v1/models; the limits come from the official Claude family table.',
     ],
   };
 }
@@ -332,7 +332,7 @@ async function fetchMistralModels(
   return {
     models,
     notes: [
-      'Mistral ne renvoie pas toujours un plafond de sortie distinct; la sortie reprend max_context_length quand aucun champ plus précis n’existe.',
+      'Mistral does not always return a distinct output limit; the output reuses max_context_length when no more precise field exists.',
     ],
   };
 }
@@ -376,7 +376,7 @@ async function fetchOpenRouterModels(
       return model(id, usage, contextWindow, maxOutputTokens, null);
     });
 
-  return { models, notes: freeOnly ? ['Seuls les modèles avec ":free" dans le nom ont été synchronisés.'] : [] };
+  return { models, notes: freeOnly ? ['Only models with ":free" in their name have been synchronized.'] : [] };
 }
 
 /**
