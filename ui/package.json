@@ -30,13 +30,16 @@
     "eslint": "^10.4.0",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.59.4",
-    "vite": "^8.0.13"
+    "vite": "^8.0.14"
   },
   "dependencies": {
     "@heroui/react": "^3.0.5",
     "@heroui/styles": "^3.0.5",
+    "highlight.js": "^11.11.1",
     "i18next": "^26.2.0",
     "lucide-react": "^1.16.0",
+    "marked": "^18.0.4",
+    "marked-highlight": "^2.2.4",
     "react": "^19.2.6",
     "react-i18next": "^17.0.8",
     "react-router-dom": "^7.15.1",

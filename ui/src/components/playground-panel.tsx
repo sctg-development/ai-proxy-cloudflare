@@ -16,7 +16,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Button,
@@ -34,12 +34,26 @@ import {
 import {
   Code2,
   Copy,
+  Download,
+  FilePlus,
   MessageSquare,
   RotateCcw,
   Send,
+  X,
 } from 'lucide-react';
+import { Marked } from 'marked';
+import { markedHighlight } from 'marked-highlight';
+import highlightJs from 'highlight.js';
 import type { AiConfig, AiProvider } from '../types/ai-config';
 import { maskApiKey } from '../lib/provider-models';
+
+interface PlaygroundFile {
+  id: string;
+  name: string;
+  type: string;
+  size: number;
+  content: string;
+}
 
 /**
  * Represents a single message in the chat conversation.
@@ -47,6 +61,7 @@ import { maskApiKey } from '../lib/provider-models';
 interface PlaygroundMessage {
   role: 'user' | 'assistant';
   content: string;
+  files?: PlaygroundFile[];
 }
 
 /**
@@ -62,6 +77,122 @@ export interface PlaygroundPanelProps {
  * should cycle through all available keys for a provider.
  */
 const AUTO_ROUND_ROBIN_KEY = '__auto_round_robin__';
+const MAX_CONTEXT_FILE_BYTES = 256 * 1024;
+
+const createMarkedRenderer = () => new Marked(
+  markedHighlight({
+    emptyLangClass: 'hljs',
+    langPrefix: 'hljs language-',
+    highlight(code, lang) {
+      const language = highlightJs.getLanguage(lang) ? lang : 'plaintext';
+      return highlightJs.highlight(code, { language }).value;
+    },
+  }),
+);
+
+const sanitizeRenderedHtml = (html: string): string => {
+  if (typeof window === 'undefined') return html;
+
+  const document = new DOMParser().parseFromString(html, 'text/html');
+  document.querySelectorAll('script, style, iframe, object, embed, link').forEach((element) => element.remove());
+  document.body.querySelectorAll('*').forEach((element) => {
+    for (const attribute of Array.from(element.attributes)) {
+      const name = attribute.name.toLowerCase();
+      const value = attribute.value.trim().toLowerCase();
+      if (name.startsWith('on') || value.startsWith('javascript:')) {
+        element.removeAttribute(attribute.name);
+      }
+    }
+  });
+
+  return document.body.innerHTML;
+};
+
+const formatBytes = (bytes: number): string => {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
+
+const buildUserContent = (prompt: string, files: PlaygroundFile[] = []): string => {
+  if (files.length === 0) return prompt;
+
+  const fileContext = files
+    .map((file) => [
+      `<file name="${file.name}" type="${file.type || 'text/plain'}" size="${file.size}">`,
+      file.content,
+      '</file>',
+    ].join('\n'))
+    .join('\n\n');
+
+  return [
+    prompt,
+    '',
+    'Attached context files:',
+    fileContext,
+  ].join('\n');
+};
+
+const messageTokenText = (message: PlaygroundMessage): string => buildUserContent(message.content, message.files);
+
+const getMarkdownFilename = (content: string, index: number): string => {
+  const heading = content.match(/^#\s+(.+)$/m)?.[1]
+    ?.trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return `${heading || `assistant-response-${index + 1}`}.md`;
+};
+
+const getFileExtension = (language: string): string => ({
+  bash: 'sh',
+  c: 'c',
+  cpp: 'cpp',
+  css: 'css',
+  html: 'html',
+  javascript: 'js',
+  js: 'js',
+  json: 'json',
+  markdown: 'md',
+  md: 'md',
+  python: 'py',
+  sh: 'sh',
+  shell: 'sh',
+  ts: 'ts',
+  tsx: 'tsx',
+  typescript: 'ts',
+  xml: 'xml',
+  yaml: 'yaml',
+  yml: 'yml',
+}[language.toLowerCase()] ?? 'txt');
+
+const extractGeneratedFiles = (content: string) => {
+  const files: Array<{ name: string; content: string }> = [];
+  const fencePattern = /```([^\n`]*)\n([\s\S]*?)```/g;
+  let match: RegExpExecArray | null;
+  let index = 0;
+
+  while ((match = fencePattern.exec(content)) !== null) {
+    const info = match[1]?.trim() ?? '';
+    const code = match[2] ?? '';
+    const filename = info.match(/(?:file(?:name)?|path|title)=["']?([^"'\s]+)["']?/i)?.[1];
+    if (filename) {
+      files.push({ name: filename, content: code.replace(/\n$/, '') });
+      continue;
+    }
+
+    if (files.length === 0 && index === 0) {
+      const language = info.split(/\s+/)[0] || 'txt';
+      files.push({
+        name: `generated.${getFileExtension(language)}`,
+        content: code.replace(/\n$/, ''),
+      });
+    }
+    index += 1;
+  }
+
+  return files;
+};
 
 export const PlaygroundPanel: React.FC<PlaygroundPanelProps> = ({ config }) => {
   // --- State: Selection & Configuration ---
@@ -80,8 +211,10 @@ export const PlaygroundPanel: React.FC<PlaygroundPanelProps> = ({ config }) => {
   // --- State: Chat History & Input ---
   const [messages, setMessages] = useState<PlaygroundMessage[]>([]);
   const [userPrompt, setUserPrompt] = useState('');
+  const [contextFiles, setContextFiles] = useState<PlaygroundFile[]>([]);
   const [playgroundError, setPlaygroundError] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   
   // --- State: Code Snippet Generation ---
   const [showCode, setShowCode] = useState(false);
@@ -90,6 +223,7 @@ export const PlaygroundPanel: React.FC<PlaygroundPanelProps> = ({ config }) => {
   const [autoKeyIndex, setAutoKeyIndex] = useState(0);
   const [lastUsedProviderKey, setLastUsedProviderKey] = useState<string>('');
   const [copiedSnippet, setCopiedSnippet] = useState<'curl' | 'python' | 'typescript' | null>(null);
+  const marked = useMemo(() => createMarkedRenderer(), []);
 
   // Derived data based on selected provider
   const provider = config.providers[providerId];
@@ -110,9 +244,11 @@ export const PlaygroundPanel: React.FC<PlaygroundPanelProps> = ({ config }) => {
   const contextMessages = resumeFromIndex === null
     ? messages
     : messages.slice(0, resumeFromIndex + 1);
-  const contextPromptTokens = contextMessages.reduce((total, message) => total + estimateTokens(message.content), 0);
+  const contextPromptTokens = contextMessages.reduce((total, message) => total + estimateTokens(messageTokenText(message)), 0);
   const contextSystemTokens = systemPrompt.trim().length > 0 ? estimateTokens(systemPrompt) : 0;
-  const contextDraftPromptTokens = userPrompt.trim().length > 0 ? estimateTokens(userPrompt) : 0;
+  const contextDraftPromptTokens = userPrompt.trim().length > 0 || contextFiles.length > 0
+    ? estimateTokens(buildUserContent(userPrompt, contextFiles))
+    : 0;
   const contextUsedTokens = contextSystemTokens + contextPromptTokens + contextDraftPromptTokens;
   const contextFillPercent = Math.min(100, Math.max(0, (contextUsedTokens / contextWindowTokens) * 100));
   const contextFillColor = contextFillPercent >= 90
@@ -189,14 +325,18 @@ export const PlaygroundPanel: React.FC<PlaygroundPanelProps> = ({ config }) => {
   const buildPayload = (
     baseMessages: PlaygroundMessage[],
     nextUserPrompt?: string,
+    nextFiles: PlaygroundFile[] = [],
   ) => {
     const requestMessages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [];
     if (systemPrompt.trim()) {
       requestMessages.push({ role: 'system', content: systemPrompt.trim() });
     }
-    requestMessages.push(...baseMessages);
+    requestMessages.push(...baseMessages.map((message) => ({
+      role: message.role,
+      content: message.role === 'user' ? buildUserContent(message.content, message.files) : message.content,
+    })));
     if (nextUserPrompt && nextUserPrompt.trim().length > 0) {
-      requestMessages.push({ role: 'user', content: nextUserPrompt.trim() });
+      requestMessages.push({ role: 'user', content: buildUserContent(nextUserPrompt.trim(), nextFiles) });
     }
 
     return {
@@ -272,12 +412,61 @@ export const PlaygroundPanel: React.FC<PlaygroundPanelProps> = ({ config }) => {
     return JSON.stringify(responseBody, null, 2);
   };
 
+  const renderMarkdown = (content: string): string => {
+    const rendered = marked.parse(content);
+    return sanitizeRenderedHtml(typeof rendered === 'string' ? rendered : content);
+  };
+
+  const readContextFiles = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+
+    const loadedFiles: PlaygroundFile[] = [];
+    for (const file of Array.from(files)) {
+      if (file.size > MAX_CONTEXT_FILE_BYTES) {
+        setPlaygroundError(`${file.name} is larger than ${formatBytes(MAX_CONTEXT_FILE_BYTES)} and was skipped.`);
+        continue;
+      }
+
+      try {
+        loadedFiles.push({
+          id: `${file.name}-${file.size}-${file.lastModified}-${crypto.randomUUID()}`,
+          name: file.name,
+          type: file.type || 'text/plain',
+          size: file.size,
+          content: await file.text(),
+        });
+      } catch {
+        setPlaygroundError(`Could not read ${file.name} as text.`);
+      }
+    }
+
+    if (loadedFiles.length > 0) {
+      setContextFiles((current) => [...current, ...loadedFiles]);
+      setPlaygroundError(null);
+    }
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const removeContextFile = (fileId: string) => {
+    setContextFiles((current) => current.filter((file) => file.id !== fileId));
+  };
+
+  const downloadTextFile = (filename: string, content: string) => {
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
   /**
    * Main function to send the user prompt to the AI provider.
    */
   const sendPrompt = async () => {
     const nextPrompt = userPrompt.trim();
-    if (!nextPrompt) return;
+    if (!nextPrompt && contextFiles.length === 0) return;
     if (!provider) {
       setPlaygroundError('Select a provider first.');
       return;
@@ -297,9 +486,14 @@ export const PlaygroundPanel: React.FC<PlaygroundPanelProps> = ({ config }) => {
       ? messages
       : messages.slice(0, resumeFromIndex + 1);
 
-    const nextUserMessage: PlaygroundMessage = { role: 'user', content: nextPrompt };
+    const nextUserMessage: PlaygroundMessage = {
+      role: 'user',
+      content: nextPrompt || 'Use the attached context files.',
+      files: contextFiles.length > 0 ? contextFiles : undefined,
+    };
     setMessages([...baseConversation, nextUserMessage]);
     setUserPrompt('');
+    setContextFiles([]);
     setPlaygroundError(null);
     setIsSending(true);
     setLastUsedProviderKey(effectiveProviderKey);
@@ -310,7 +504,7 @@ export const PlaygroundPanel: React.FC<PlaygroundPanelProps> = ({ config }) => {
     }
 
     try {
-      const payload = buildPayload(baseConversation, nextPrompt);
+      const payload = buildPayload(baseConversation, nextUserMessage.content, nextUserMessage.files);
       const response = await fetch(buildDirectChatUrl(provider), {
         method: 'POST',
         headers: {
@@ -369,8 +563,13 @@ export const PlaygroundPanel: React.FC<PlaygroundPanelProps> = ({ config }) => {
   const snippetBaseConversation = resumeFromIndex === null
     ? messages
     : messages.slice(0, resumeFromIndex + 1);
+  const snippetNextPrompt = snippetPrompt.length > 0
+    ? snippetPrompt
+    : contextFiles.length > 0
+      ? 'Use the attached context files.'
+      : undefined;
   const snippetPayload = JSON.stringify(
-    buildPayload(snippetBaseConversation, snippetPrompt.length > 0 ? snippetPrompt : undefined),
+    buildPayload(snippetBaseConversation, snippetNextPrompt, contextFiles),
     null,
     2,
   );
@@ -477,6 +676,7 @@ export const PlaygroundPanel: React.FC<PlaygroundPanelProps> = ({ config }) => {
               size="sm"
               onPress={() => {
                 setMessages([]);
+                setContextFiles([]);
                 setResumeFromIndex(null);
                 setPlaygroundError(null);
               }}
@@ -659,26 +859,73 @@ export const PlaygroundPanel: React.FC<PlaygroundPanelProps> = ({ config }) => {
                   Start the conversation by sending your first message.
                 </p>
               ) : (
-                messages.map((message, index) => (
-                  <div
-                    key={`${message.role}-${index}`}
-                    className={[
-                      'rounded-md px-3 py-2 text-sm',
-                      message.role === 'user' ? 'bg-primary/10' : 'bg-background',
-                    ].join(' ')}
-                  >
-                    <p className="mb-1 text-xs font-semibold uppercase text-muted-foreground">
-                      {message.role === 'user' ? 'user' : 'assistant'}
-                    </p>
-                    <p className="whitespace-pre-wrap">{message.content}</p>
-                    <div className="mt-2 flex justify-end">
-                      <Button size="sm" variant="ghost" onPress={() => setResumeFromIndex(index)}>
-                        <RotateCcw className="mr-2 h-3.5 w-3.5" />
-                        Resume from here
-                      </Button>
+                messages.map((message, index) => {
+                  const generatedFiles = message.role === 'assistant'
+                    ? extractGeneratedFiles(message.content)
+                    : [];
+
+                  return (
+                    <div
+                      key={`${message.role}-${index}`}
+                      className={[
+                        'rounded-md px-3 py-2 text-sm',
+                        message.role === 'user' ? 'bg-primary/10' : 'bg-background',
+                      ].join(' ')}
+                    >
+                      <p className="mb-1 text-xs font-semibold uppercase text-muted-foreground">
+                        {message.role === 'user' ? 'user' : 'assistant'}
+                      </p>
+                      {message.role === 'assistant' ? (
+                        <div
+                          className="playground-markdown"
+                          dangerouslySetInnerHTML={{ __html: renderMarkdown(message.content) }}
+                        />
+                      ) : (
+                        <p className="whitespace-pre-wrap">{message.content}</p>
+                      )}
+                      {message.files && message.files.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {message.files.map((file) => (
+                            <span
+                              key={file.id}
+                              className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs text-muted-foreground"
+                            >
+                              {file.name}
+                              <span>({formatBytes(file.size)})</span>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      <div className="mt-2 flex flex-wrap justify-end gap-2">
+                        {message.role === 'assistant' && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onPress={() => downloadTextFile(getMarkdownFilename(message.content, index), message.content)}
+                          >
+                            <Download className="mr-2 h-3.5 w-3.5" />
+                            Markdown
+                          </Button>
+                        )}
+                        {generatedFiles.map((file) => (
+                          <Button
+                            key={file.name}
+                            size="sm"
+                            variant="ghost"
+                            onPress={() => downloadTextFile(file.name, file.content)}
+                          >
+                            <Download className="mr-2 h-3.5 w-3.5" />
+                            {file.name}
+                          </Button>
+                        ))}
+                        <Button size="sm" variant="ghost" onPress={() => setResumeFromIndex(index)}>
+                          <RotateCcw className="mr-2 h-3.5 w-3.5" />
+                          Resume from here
+                        </Button>
+                      </div>
                     </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
 
@@ -690,6 +937,36 @@ export const PlaygroundPanel: React.FC<PlaygroundPanelProps> = ({ config }) => {
                 onChange={(event) => setUserPrompt(event.target.value)}
                 placeholder="Ask something..."
               />
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={(event) => void readContextFiles(event.target.files)}
+                />
+                <Button size="sm" variant="ghost" onPress={() => fileInputRef.current?.click()}>
+                  <FilePlus className="mr-2 h-3.5 w-3.5" />
+                  Add files
+                </Button>
+                {contextFiles.map((file) => (
+                  <span
+                    key={file.id}
+                    className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs text-muted-foreground"
+                  >
+                    {file.name}
+                    <span>({formatBytes(file.size)})</span>
+                    <button
+                      type="button"
+                      className="ml-1 rounded-sm text-muted-foreground hover:text-foreground"
+                      onClick={() => removeContextFile(file.id)}
+                      aria-label={`Remove ${file.name}`}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
               <div className="flex items-end justify-between gap-3">
                 <Tooltip delay={0}>
                   <Tooltip.Trigger aria-label="Context usage details" className="w-full max-w-xs">
@@ -793,4 +1070,3 @@ export const PlaygroundPanel: React.FC<PlaygroundPanelProps> = ({ config }) => {
     </div>
   );
 };
-

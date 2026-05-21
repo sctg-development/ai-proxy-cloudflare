@@ -8,3 +8,73 @@
  * @import "tailwindcss" directive at build time.
  */
 @import "@heroui/react/styles";
+@import "highlight.js/styles/github-dark.css";
+
+.playground-markdown {
+  display: grid;
+  gap: 0.75rem;
+  line-height: 1.65;
+}
+
+.playground-markdown :where(h1, h2, h3, h4) {
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.playground-markdown :where(h1) {
+  font-size: 1.25rem;
+}
+
+.playground-markdown :where(h2) {
+  font-size: 1.1rem;
+}
+
+.playground-markdown :where(h3, h4) {
+  font-size: 1rem;
+}
+
+.playground-markdown :where(p, ul, ol, pre, blockquote, table) {
+  margin: 0;
+}
+
+.playground-markdown :where(ul, ol) {
+  padding-left: 1.25rem;
+}
+
+.playground-markdown :where(ul) {
+  list-style: disc;
+}
+
+.playground-markdown :where(ol) {
+  list-style: decimal;
+}
+
+.playground-markdown :where(blockquote) {
+  border-left: 3px solid hsl(var(--border));
+  color: hsl(var(--muted-foreground));
+  padding-left: 0.75rem;
+}
+
+.playground-markdown :where(pre) {
+  border-radius: 0.375rem;
+  overflow: auto;
+  padding: 0.75rem;
+}
+
+.playground-markdown :where(:not(pre) > code) {
+  border-radius: 0.25rem;
+  background: hsl(var(--muted) / 0.55);
+  padding: 0.1rem 0.3rem;
+  font-size: 0.875em;
+}
+
+.playground-markdown :where(table) {
+  border-collapse: collapse;
+  display: block;
+  overflow-x: auto;
+}
+
+.playground-markdown :where(th, td) {
+  border: 1px solid hsl(var(--border));
+  padding: 0.35rem 0.5rem;
+}
