@@ -1,3 +1,20 @@
+// MIT License
+// Copyright (c) 2024-2026 Ronan Le Meillat - SCTG Development
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 /**
  * @file API client for interacting with the Cloudflare Worker.
  */
@@ -10,6 +27,11 @@ import type { AiConfig } from '../types/ai-config';
 export interface ApiError {
   error: string;
   message?: string;
+}
+
+export interface ChatCompletionOptions {
+  providerKeyMode?: 'auto' | 'manual';
+  providerApiKey?: string;
 }
 
 /**
@@ -95,5 +117,54 @@ export const ApiService = {
       const errorData = await response.json() as ApiError;
       throw new Error(errorData.message || errorData.error || 'Failed to update vault');
     }
+  },
+
+  /**
+   * Send a chat completion request through the Worker for a specific provider.
+   * The optional provider-key headers are consumed by playground-compatible setups.
+   */
+  async createChatCompletion(
+    providerId: string,
+    payload: Record<string, unknown>,
+    options?: ChatCompletionOptions,
+  ): Promise<unknown> {
+    const token = this.getToken();
+    if (!token) throw new Error('No authorization token found');
+
+    const headers: Record<string, string> = {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    };
+
+    if (options?.providerKeyMode) {
+      headers['X-Provider-Key-Mode'] = options.providerKeyMode;
+    }
+    if (options?.providerApiKey) {
+      headers['X-Provider-Api-Key'] = options.providerApiKey;
+    }
+
+    const response = await fetch(`${import.meta.env.VAULT_URL}/${providerId}/v1/chat/completions`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+    });
+
+    const responseText = await response.text();
+    let parsedBody: unknown = responseText;
+    try {
+      parsedBody = JSON.parse(responseText);
+    } catch {
+      // Keep raw text for non-json errors and compatibility payloads.
+    }
+
+    if (!response.ok) {
+      const errorBody = parsedBody as ApiError;
+      throw new Error(
+        errorBody?.message || errorBody?.error || `Request failed with status ${response.status}`,
+      );
+    }
+
+    return parsedBody;
   }
 };
+

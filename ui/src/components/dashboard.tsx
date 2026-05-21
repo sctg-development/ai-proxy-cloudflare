@@ -1,3 +1,20 @@
+// MIT License
+// Copyright (c) 2024-2026 Ronan Le Meillat - SCTG Development
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 /**
  * @file Main dashboard for managing the AI vault.
  * Providers, their models and their API keys are all managed from here.
@@ -25,6 +42,7 @@ import {
   Box,
   DownloadCloud,
   Edit,
+  FlaskConical,
   GripVertical,
   Key,
   LogOut,
@@ -43,6 +61,7 @@ import {
   maskApiKey,
   renumberPriorities,
 } from '../lib/provider-models';
+import { PlaygroundPanel } from './playground-panel';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -80,6 +99,9 @@ export const Dashboard: React.FC = () => {
 
   /** Currently selected top-level tab ("providers"). */
   const [activeTab, setActiveTab] = useState<string>('providers');
+
+  /** Toggles between vault management and chat playground modes. */
+  const [showPlayground, setShowPlayground] = useState(false);
 
   /** What type of form the modal should show. */
   const [modalType, setModalType] = useState<EditTarget['type']>('provider');
@@ -397,6 +419,14 @@ export const Dashboard: React.FC = () => {
               <Save className="mr-2 h-4 w-4" />
               Save Vault
             </Button>
+            <Button
+              variant={showPlayground ? 'primary' : 'ghost'}
+              size="sm"
+              onPress={() => setShowPlayground((current) => !current)}
+            >
+              <FlaskConical className="mr-2 h-4 w-4" />
+              Playground
+            </Button>
             <Button variant="danger-soft" size="sm" onPress={logout}>
               <LogOut className="mr-2 h-4 w-4" />
               Disconnect
@@ -415,91 +445,95 @@ export const Dashboard: React.FC = () => {
           </Alert>
         )}
 
-        {/*
-         * Top-level tabs. Currently only "Providers" exists but the tab bar
-         * makes it easy to add an "Overview" or "Settings" tab later.
-         *
-         * selectedKey / onSelectionChange is react-aria's
-         * controlled pattern for tabs — same idea as controlled inputs in React.
-         */}
-        <Tabs
-          selectedKey={activeTab}
-          onSelectionChange={(k) => setActiveTab(k as string)}
-        >
-          <Tabs.ListContainer>
-            <Tabs.List aria-label="Vault sections">
-              <Tabs.Tab id="providers">
-                <div className="flex items-center gap-2">
-                  <Server className="h-4 w-4" />
-                  Providers
-                </div>
-              </Tabs.Tab>
-            </Tabs.List>
-          </Tabs.ListContainer>
+        {showPlayground ? (
+          <PlaygroundPanel config={activeConfig} />
+        ) : (
+          /*
+           * Top-level tabs. Currently only "Providers" exists but the tab bar
+           * makes it easy to add an "Overview" or "Settings" tab later.
+           *
+           * selectedKey / onSelectionChange is react-aria's
+           * controlled pattern for tabs — same idea as controlled inputs in React.
+           */
+          <Tabs
+            selectedKey={activeTab}
+            onSelectionChange={(k) => setActiveTab(k as string)}
+          >
+            <Tabs.ListContainer>
+              <Tabs.List aria-label="Vault sections">
+                <Tabs.Tab id="providers">
+                  <div className="flex items-center gap-2">
+                    <Server className="h-4 w-4" />
+                    Providers
+                  </div>
+                </Tabs.Tab>
+              </Tabs.List>
+            </Tabs.ListContainer>
 
-          <Tabs.Panel id="providers" className="mt-6">
-            <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-lg font-semibold">Managed AI Providers</h2>
-              <Button
-                size="sm"
-                onPress={() => openModal('provider', null)}
-              >
-                <Plus className="mr-2 h-4 w-4" />
-                Add Provider
-              </Button>
-            </div>
+            <Tabs.Panel id="providers" className="mt-6">
+              <div className="mb-4 flex items-center justify-between">
+                <h2 className="text-lg font-semibold">Managed AI Providers</h2>
+                <Button
+                  size="sm"
+                  onPress={() => openModal('provider', null)}
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add Provider
+                </Button>
+              </div>
 
-            <div className="grid gap-6">
-              {Object.entries(activeConfig.providers).map(([id, provider]) => (
-                <ProviderCard
-                  key={id}
-                  id={id}
-                  provider={provider}
-                  onDelete={() => deleteProvider(id)}
-                  onEdit={() =>
-                    openModal('provider', { type: 'provider', providerId: id })
-                  }
-                  onAddKey={() =>
-                    openModal('key', { type: 'key', providerId: id })
-                  }
-                  onAddModel={() =>
-                    openModal('model', { type: 'model', providerId: id })
-                  }
-                  onEditKey={(keyIndex) =>
-                    openModal('key', {
-                      type: 'key',
-                      providerId: id,
-                      itemId: keyIndex.toString(),
-                    })
-                  }
-                  onEditModel={(modelId) =>
-                    openModal('model', {
-                      type: 'model',
-                      providerId: id,
-                      itemId: modelId,
-                    })
-                  }
-                  onDeleteKey={(index) => {
-                    // Immutably remove the key at `index` from the array.
-                    const newConfig: AiConfig = JSON.parse(JSON.stringify(activeConfig));
-                    newConfig.providers[id].keys.splice(index, 1);
-                    stageConfig(newConfig);
-                  }}
-                  onDeleteModel={(modelId) => {
-                    deleteProviderModels(id, [modelId]);
-                  }}
-                  onDeleteSelectedModels={(modelIds) => deleteProviderModels(id, modelIds)}
-                  onRefreshModels={() => refreshProviderModels(id)}
-                  onRefreshFreeModels={() => refreshProviderFreeModels(id)}
-                  canRefreshModels={canDiscoverProviderModels(id, provider)}
-                  isRefreshingModels={syncingProviderId === id}
-                  modelSyncMessage={modelSyncMessages[id]}
-                  onReorderModels={(models) => reorderProviderModels(id, models)}
-                />
-              ))}
-            </div>
-          </Tabs.Panel>
-        </Tabs>
+              <div className="grid gap-6">
+                {Object.entries(activeConfig.providers).map(([id, provider]) => (
+                  <ProviderCard
+                    key={id}
+                    id={id}
+                    provider={provider}
+                    onDelete={() => deleteProvider(id)}
+                    onEdit={() =>
+                      openModal('provider', { type: 'provider', providerId: id })
+                    }
+                    onAddKey={() =>
+                      openModal('key', { type: 'key', providerId: id })
+                    }
+                    onAddModel={() =>
+                      openModal('model', { type: 'model', providerId: id })
+                    }
+                    onEditKey={(keyIndex) =>
+                      openModal('key', {
+                        type: 'key',
+                        providerId: id,
+                        itemId: keyIndex.toString(),
+                      })
+                    }
+                    onEditModel={(modelId) =>
+                      openModal('model', {
+                        type: 'model',
+                        providerId: id,
+                        itemId: modelId,
+                      })
+                    }
+                    onDeleteKey={(index) => {
+                      // Immutably remove the key at `index` from the array.
+                      const newConfig: AiConfig = JSON.parse(JSON.stringify(activeConfig));
+                      newConfig.providers[id].keys.splice(index, 1);
+                      stageConfig(newConfig);
+                    }}
+                    onDeleteModel={(modelId) => {
+                      deleteProviderModels(id, [modelId]);
+                    }}
+                    onDeleteSelectedModels={(modelIds) => deleteProviderModels(id, modelIds)}
+                    onRefreshModels={() => refreshProviderModels(id)}
+                    onRefreshFreeModels={() => refreshProviderFreeModels(id)}
+                    canRefreshModels={canDiscoverProviderModels(id, provider)}
+                    isRefreshingModels={syncingProviderId === id}
+                    modelSyncMessage={modelSyncMessages[id]}
+                    onReorderModels={(models) => reorderProviderModels(id, models)}
+                  />
+                ))}
+              </div>
+            </Tabs.Panel>
+          </Tabs>
+        )}
       </main>
 
       {/* ── Config modal (add / edit provider, model, or key) ──────────────── */}
@@ -1312,5 +1346,4 @@ const ConfigModal: React.FC<ConfigModalProps> = ({
     </Modal>
   );
 };
-
 
