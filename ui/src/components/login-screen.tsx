@@ -55,6 +55,7 @@ export const LoginScreen: React.FC = () => {
             {/* isRequired adds native HTML5 validation + aria-required attribute */}
             <TextField isRequired name="token">
               <Label>Authorization Token</Label>
+              <Input type="hidden" autoComplete="username" value="AI Vault Admin" readOnly className="hidden" />
               <Input
                 type="password"
                 placeholder="Paste your token here..."
