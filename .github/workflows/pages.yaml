@@ -19,7 +19,7 @@ name: GHRelease
 on:
   push:
     branches:
-      - main
+      - master
     paths:
       - ui/**
       - package-lock.json
