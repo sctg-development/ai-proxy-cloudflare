@@ -913,7 +913,7 @@ const ModelPriorityList: React.FC<ModelPriorityListProps> = ({
         </Button>
       </div>
       <div
-        className="grid min-w-[920px] grid-cols-[44px_44px_minmax(260px,1fr)_110px_160px_120px_120px] items-center gap-3 border-b bg-muted/20 px-3 py-2 text-xs font-semibold uppercase text-muted-foreground"
+        className="grid min-w-230 grid-cols-[44px_44px_minmax(260px,1fr)_110px_160px_120px_120px] items-center gap-3 border-b bg-muted/20 px-3 py-2 text-xs font-semibold uppercase text-muted-foreground"
         role="row"
       >
         <span role="columnheader" aria-label="Drag handle" />
@@ -961,7 +961,7 @@ const ModelPriorityList: React.FC<ModelPriorityListProps> = ({
               setDropIndex(null);
             }}
             className={[
-              'grid min-w-[920px] grid-cols-[44px_44px_minmax(260px,1fr)_110px_160px_120px_120px] items-center gap-3 border-b px-3 py-2 last:border-b-0',
+              'grid min-w-230 grid-cols-[44px_44px_minmax(260px,1fr)_110px_160px_120px_120px] items-center gap-3 border-b px-3 py-2 last:border-b-0',
               'transition-colors',
               draggedIndex === index ? 'bg-muted/30 opacity-70' : '',
               dropIndex === index && draggedIndex !== index ? 'bg-primary/10' : '',

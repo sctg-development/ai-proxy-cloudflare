@@ -1043,7 +1043,7 @@ export const PlaygroundPanel: React.FC<PlaygroundPanelProps> = ({ config }) => {
               {showCode ? 'Hide code' : 'Show code'}
             </Button>
             <Select
-              className="w-[220px]"
+              className="w-55"
               value={snippetLanguage}
               onChange={(value) => setSnippetLanguage(String(value ?? 'curl') as 'curl' | 'python' | 'typescript')}
             >
