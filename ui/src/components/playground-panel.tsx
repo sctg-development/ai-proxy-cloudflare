@@ -99,7 +99,7 @@ const sanitizeRenderedHtml = (html: string): string => {
     for (const attribute of Array.from(element.attributes)) {
       const name = attribute.name.toLowerCase();
       const value = attribute.value.trim().toLowerCase();
-      if (name.startsWith('on') || value.startsWith('javascript:')) {
+      if (name.startsWith('on') || value.startsWith('javascript:') || value.startsWith('data:') || value.startsWith('vbscript:')) {
         element.removeAttribute(attribute.name);
       }
     }
@@ -224,14 +224,14 @@ export const PlaygroundPanel: React.FC<PlaygroundPanelProps> = ({ config }) => {
   const [providerId, setProviderId] = useState<string>(providerIds[0] ?? '');
   const [modelId, setModelId] = useState<string>('');
   const [selectedKey, setSelectedKey] = useState<string>(AUTO_ROUND_ROBIN_KEY);
-  
+
   // --- State: Inference Parameters ---
   const [systemPrompt, setSystemPrompt] = useState('You are a concise, accurate, and helpful AI assistant.');
   const [streamEnabled, setStreamEnabled] = useState(true);
   const [temperature, setTemperature] = useState(0.7);
   const [maxTokens, setMaxTokens] = useState(512);
   const [topP, setTopP] = useState(1);
-  
+
   // --- State: Chat History & Input ---
   const [messages, setMessages] = useState<PlaygroundMessage[]>([]);
   const [userPrompt, setUserPrompt] = useState('');
@@ -239,7 +239,7 @@ export const PlaygroundPanel: React.FC<PlaygroundPanelProps> = ({ config }) => {
   const [playgroundError, setPlaygroundError] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  
+
   // --- State: Code Snippet Generation ---
   const [showCode, setShowCode] = useState(false);
   const [snippetLanguage, setSnippetLanguage] = useState<'curl' | 'python' | 'typescript'>('curl');
@@ -523,7 +523,7 @@ export const PlaygroundPanel: React.FC<PlaygroundPanelProps> = ({ config }) => {
     setPlaygroundError(null);
     setIsSending(true);
     setLastUsedProviderKey(effectiveProviderKey);
-    
+
     // Update round robin index for the next request if applicable
     if (selectedKey === AUTO_ROUND_ROBIN_KEY && usableKeys.length > 0) {
       setAutoKeyIndex((index) => (index + 1) % usableKeys.length);
@@ -602,7 +602,7 @@ export const PlaygroundPanel: React.FC<PlaygroundPanelProps> = ({ config }) => {
   const effectiveSnippetProviderKey = lastUsedProviderKey || resolveProviderKey();
 
   const playgroundUrl = provider ? buildDirectChatUrl(provider) : '';
-  
+
   // cURL representation
   const curlSnippet = [
     `curl -X POST '${playgroundUrl}'`,
@@ -711,7 +711,7 @@ export const PlaygroundPanel: React.FC<PlaygroundPanelProps> = ({ config }) => {
             </Button>
           </div>
         </Card.Header>
-        
+
         <Card.Content className="space-y-4 p-4">
           {/* --- Provider and Model Selection --- */}
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
