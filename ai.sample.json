@@ -1,0 +1,547 @@
+{
+  "version": 1,
+  "providers": {
+    "anthropic": {
+      "protocol": "anthropic",
+      "gatewayEndpoint": "https://gateway.ai.cloudflare.com/v1/__CLOUDFLARE_ID__/default/compat",
+      "gatewayModelPrefix": "anthropic",
+      "endpoint": "https://api.anthropic.com/v1",
+      "modelCardEndpoint": "https://claude.ai/claude-family",
+      "keys": [
+        {
+          "key": "YOUR_ANTHROPIC_API_KEY",
+          "owner": "your@example.com",
+          "type": "free"
+        }
+      ],
+      "models": [
+        {
+          "id": "claude-haiku-4-5-20251001",
+          "usage": "chat",
+          "contextWindow": 200000,
+          "maxOutputTokens": 64000,
+          "tpmLimit": null,
+          "priority": 200,
+          "tags": [
+            "fast",
+            "cheap",
+            "code"
+          ]
+        },
+        {
+          "id": "claude-opus-4-6",
+          "usage": "chat",
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "tpmLimit": null,
+          "priority": 220,
+          "tags": [
+            "powerful",
+            "large",
+            "reasoning"
+          ]
+        },
+        {
+          "id": "claude-sonnet-4-6",
+          "usage": "chat",
+          "contextWindow": 1000000,
+          "maxOutputTokens": 64000,
+          "tpmLimit": null,
+          "priority": 210,
+          "tags": [
+            "code",
+            "large",
+            "reasoning"
+          ]
+        }
+      ]
+    },
+    "gemini": {
+      "protocol": "gemini",
+      "gatewayEndpoint": "https://gateway.ai.cloudflare.com/v1/__CLOUDFLARE_ID__/default/compat",
+      "gatewayModelPrefix": "google-ai-studio",
+      "endpoint": "https://generativelanguage.googleapis.com/v1beta",
+      "modelCardEndpoint": "https://ai.google.dev/gemini-api/docs/models/{model}",
+      "keys": [
+        {
+          "key": "YOUR_GEMINI_API_KEY",
+          "owner": "your@example.com",
+          "type": "free"
+        }
+      ],
+      "models": [
+        {
+          "id": "gemini-3-flash-preview",
+          "usage": "chat",
+          "contextWindow": 1048576,
+          "maxOutputTokens": 65536,
+          "tpmLimit": null,
+          "priority": 0
+        },
+        {
+          "id": "gemini-3.1-pro-preview",
+          "usage": "chat",
+          "contextWindow": 1048576,
+          "maxOutputTokens": 65536,
+          "tpmLimit": null,
+          "priority": 10
+        },
+        {
+          "id": "gemini-embedding-001",
+          "usage": "embedding",
+          "contextWindow": 2048,
+          "maxOutputTokens": 0,
+          "tpmLimit": null,
+          "priority": 20
+        },
+        {
+          "id": "gemini-embedding-2-preview",
+          "usage": "embedding",
+          "contextWindow": 8192,
+          "maxOutputTokens": 0,
+          "tpmLimit": null,
+          "priority": 30
+        },
+        {
+          "id": "gemini-embedding-2",
+          "usage": "embedding",
+          "contextWindow": 8192,
+          "maxOutputTokens": 0,
+          "tpmLimit": null,
+          "priority": 40
+        }
+      ]
+    },
+    "groq": {
+      "protocol": "openai",
+      "gatewayEndpoint": "https://gateway.ai.cloudflare.com/v1/__CLOUDFLARE_ID__/default/compat",
+      "gatewayModelPrefix": "groq",
+      "endpoint": "https://api.groq.com/openai/v1",
+      "modelCardEndpoint": "https://console.groq.com/docs/model/{model}",
+      "keys": [
+        {
+          "key": "YOUR_GROQ_API_KEY",
+          "owner": "your@example.com",
+          "type": "free"
+        }
+      ],
+      "models": [
+        {
+          "id": "meta-llama/llama-4-scout-17b-16e-instruct",
+          "usage": "chat",
+          "contextWindow": 131072,
+          "maxOutputTokens": 8192,
+          "tpmLimit": null,
+          "priority": 0
+        },
+        {
+          "id": "llama-3.1-8b-instant",
+          "usage": "chat",
+          "contextWindow": 131072,
+          "maxOutputTokens": 131072,
+          "tpmLimit": null,
+          "priority": 10
+        },
+        {
+          "id": "llama-3.3-70b-versatile",
+          "usage": "chat",
+          "contextWindow": 131072,
+          "maxOutputTokens": 32768,
+          "tpmLimit": null,
+          "priority": 20
+        },
+        {
+          "id": "groq/compound-mini",
+          "usage": "chat",
+          "contextWindow": 131072,
+          "maxOutputTokens": 8192,
+          "tpmLimit": null,
+          "priority": 30
+        },
+        {
+          "id": "groq/compound",
+          "usage": "chat",
+          "contextWindow": 131072,
+          "maxOutputTokens": 8192,
+          "tpmLimit": null,
+          "priority": 40
+        },
+        {
+          "id": "openai/gpt-oss-120b",
+          "usage": "chat",
+          "contextWindow": 131072,
+          "maxOutputTokens": 65536,
+          "tpmLimit": null,
+          "priority": 50
+        },
+        {
+          "id": "openai/gpt-oss-20b",
+          "usage": "chat",
+          "contextWindow": 131072,
+          "maxOutputTokens": 65536,
+          "tpmLimit": null,
+          "priority": 60
+        },
+        {
+          "id": "qwen/qwen3-32b",
+          "usage": "chat",
+          "contextWindow": 131072,
+          "maxOutputTokens": 40960,
+          "tpmLimit": null,
+          "priority": 70
+        }
+      ]
+    },
+    "mistral": {
+      "protocol": "openai",
+      "gatewayEndpoint": "https://gateway.ai.cloudflare.com/v1/__CLOUDFLARE_ID__/default/compat",
+      "gatewayModelPrefix": "mistral",
+      "endpoint": "https://api.mistral.ai/v1",
+      "modelCardEndpoint": "https://docs.mistral.ai/models/model-cards/{model}",
+      "keys": [
+        {
+          "key": "YOUR_MISTRAL_API_KEY",
+          "owner": "your@example.com",
+          "type": "free"
+        }
+      ],
+      "models": [
+        {
+          "id": "codestral-latest",
+          "usage": "chat",
+          "contextWindow": 256000,
+          "maxOutputTokens": 256000,
+          "tpmLimit": 500000,
+          "priority": 0,
+          "tags": [
+            "codestral",
+            "small",
+            "code"
+          ]
+        },
+        {
+          "id": "magistral-medium-latest",
+          "usage": "chat",
+          "contextWindow": 128000,
+          "maxOutputTokens": 128000,
+          "tpmLimit": 500000,
+          "priority": 10,
+          "tags": [
+            "magistral",
+            "medium",
+            "reasoning"
+          ]
+        },
+        {
+          "id": "mistral-large-latest",
+          "usage": "chat",
+          "contextWindow": 128000,
+          "maxOutputTokens": 128000,
+          "tpmLimit": 500000,
+          "priority": 20,
+          "tags": [
+            "mistral",
+            "large",
+            "fast"
+          ]
+        },
+        {
+          "id": "mistral-medium-latest",
+          "usage": "chat",
+          "contextWindow": 128000,
+          "maxOutputTokens": 128000,
+          "tpmLimit": 500000,
+          "priority": 30,
+          "tags": [
+            "mistral",
+            "medium",
+            "fast"
+          ]
+        },
+        {
+          "id": "mistral-small-latest",
+          "usage": "chat",
+          "contextWindow": 128000,
+          "maxOutputTokens": 128000,
+          "tpmLimit": 500000,
+          "priority": 40,
+          "tags": [
+            "mistral",
+            "small",
+            "cheap"
+          ]
+        },
+        {
+          "id": "mistral-embed",
+          "usage": "embedding",
+          "contextWindow": 128000,
+          "maxOutputTokens": 128000,
+          "tpmLimit": 500000,
+          "priority": 50,
+          "tags": [
+            "mistral",
+            "small",
+            "cheap"
+          ]
+        },
+        {
+          "id": "devstral-latest",
+          "usage": "chat",
+          "contextWindow": 256000,
+          "maxOutputTokens": 256000,
+          "tpmLimit": 500000,
+          "priority": 60,
+          "tags": [
+            "codestral",
+            "small",
+            "code"
+          ]
+        }
+      ]
+    },
+    "morph": {
+      "protocol": "openai",
+      "gatewayEndpoint": "https://gateway.ai.cloudflare.com/v1/__CLOUDFLARE_ID__/default/compat",
+      "gatewayModelPrefix": "custom-morph",
+      "endpoint": "https://api.morphllm.com/v1",
+      "keys": [
+        {
+          "key": "YOUR_MORPH_API_KEY",
+          "owner": "your@example.com",
+          "type": "free"
+        }
+      ],
+      "models": [
+        {
+          "id": "morph-v3-fast",
+          "usage": "chat",
+          "contextWindow": 81900,
+          "maxOutputTokens": 38000,
+          "tpmLimit": null,
+          "priority": 100,
+          "tags": [
+            "apply",
+            "morph",
+            "chat"
+          ]
+        }
+      ]
+    },
+    "openrouter": {
+      "protocol": "openai",
+      "gatewayEndpoint": "https://gateway.ai.cloudflare.com/v1/__CLOUDFLARE_ID__/default/compat",
+      "gatewayModelPrefix": "openrouter",
+      "endpoint": "https://openrouter.ai/api/v1",
+      "modelCardEndpoint": "https://openrouter.ai/{model}",
+      "keys": [
+        {
+          "key": "YOUR_OPENROUTER_API_KEY",
+          "owner": "your@example.com",
+          "type": "free"
+        }
+      ],
+      "models": [
+        {
+          "id": "deepseek/deepseek-v4-flash:free",
+          "usage": "chat",
+          "contextWindow": 1048576,
+          "maxOutputTokens": 384000,
+          "tpmLimit": null,
+          "priority": 0
+        },
+        {
+          "id": "nvidia/nemotron-3-nano-30b-a3b:free",
+          "usage": "chat",
+          "contextWindow": 256000,
+          "maxOutputTokens": 256000,
+          "tpmLimit": null,
+          "priority": 10
+        },
+        {
+          "id": "qwen/qwen3-coder:free",
+          "usage": "chat",
+          "contextWindow": 262000,
+          "maxOutputTokens": 262000,
+          "tpmLimit": null,
+          "priority": 20
+        },
+        {
+          "id": "google/gemma-4-31b-it:free",
+          "usage": "chat",
+          "contextWindow": 262144,
+          "maxOutputTokens": 32768,
+          "tpmLimit": null,
+          "priority": 30
+        },
+        {
+          "id": "openai/gpt-oss-120b:free",
+          "usage": "chat",
+          "contextWindow": 131072,
+          "maxOutputTokens": 131072,
+          "tpmLimit": null,
+          "priority": 40
+        },
+        {
+          "id": "openai/gpt-oss-20b:free",
+          "usage": "chat",
+          "contextWindow": 131072,
+          "maxOutputTokens": 8192,
+          "tpmLimit": null,
+          "priority": 50
+        },
+        {
+          "id": "google/gemma-4-26b-a4b-it:free",
+          "usage": "chat",
+          "contextWindow": 262144,
+          "maxOutputTokens": 32768,
+          "tpmLimit": null,
+          "priority": 60
+        },
+        {
+          "id": "liquid/lfm-2.5-1.2b-instruct:free",
+          "usage": "chat",
+          "contextWindow": 32768,
+          "maxOutputTokens": 32768,
+          "tpmLimit": null,
+          "priority": 70
+        },
+        {
+          "id": "liquid/lfm-2.5-1.2b-thinking:free",
+          "usage": "chat",
+          "contextWindow": 32768,
+          "maxOutputTokens": 32768,
+          "tpmLimit": null,
+          "priority": 80
+        },
+        {
+          "id": "meta-llama/llama-3.2-3b-instruct:free",
+          "usage": "chat",
+          "contextWindow": 131072,
+          "maxOutputTokens": 131072,
+          "tpmLimit": null,
+          "priority": 90
+        },
+        {
+          "id": "meta-llama/llama-3.3-70b-instruct:free",
+          "usage": "chat",
+          "contextWindow": 65536,
+          "maxOutputTokens": 65536,
+          "tpmLimit": null,
+          "priority": 100
+        },
+        {
+          "id": "minimax/minimax-m2.5:free",
+          "usage": "chat",
+          "contextWindow": 196608,
+          "maxOutputTokens": 8192,
+          "tpmLimit": null,
+          "priority": 110
+        },
+        {
+          "id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+          "usage": "chat",
+          "contextWindow": 256000,
+          "maxOutputTokens": 65536,
+          "tpmLimit": null,
+          "priority": 120
+        },
+        {
+          "id": "nvidia/nemotron-3-super-120b-a12b:free",
+          "usage": "chat",
+          "contextWindow": 262144,
+          "maxOutputTokens": 262144,
+          "tpmLimit": null,
+          "priority": 130
+        },
+        {
+          "id": "nvidia/nemotron-nano-12b-v2-vl:free",
+          "usage": "chat",
+          "contextWindow": 128000,
+          "maxOutputTokens": 128000,
+          "tpmLimit": null,
+          "priority": 140
+        },
+        {
+          "id": "nvidia/nemotron-nano-9b-v2:free",
+          "usage": "chat",
+          "contextWindow": 128000,
+          "maxOutputTokens": 128000,
+          "tpmLimit": null,
+          "priority": 150
+        }
+      ]
+    },
+    "sambanova": {
+      "protocol": "openai",
+      "endpoint": "https://api.sambanova.ai/v1",
+      "gatewayEndpoint": "https://gateway.ai.cloudflare.com/v1/__CLOUDFLARE_ID__/default/compat",
+      "gatewayModelPrefix": "custom-sambanova",
+      "modelCardEndpoint": "https://huggingface.co/{model}",
+      "keys": [
+        {
+          "key": "YOUR_SAMBANOVA_API_KEY",
+          "owner": "your@example.com",
+          "type": "free"
+        }
+      ],
+      "models": [
+        {
+          "id": "DeepSeek-V3.1",
+          "usage": "chat",
+          "contextWindow": 131072,
+          "maxOutputTokens": 7168,
+          "tpmLimit": null,
+          "priority": 0
+        },
+        {
+          "id": "Meta-Llama-3.3-70B-Instruct",
+          "usage": "chat",
+          "contextWindow": 131072,
+          "maxOutputTokens": 3072,
+          "tpmLimit": null,
+          "priority": 10
+        },
+        {
+          "id": "gpt-oss-120b",
+          "usage": "chat",
+          "contextWindow": 131072,
+          "maxOutputTokens": 131072,
+          "tpmLimit": null,
+          "priority": 20
+        },
+        {
+          "id": "gemma-3-12b-it",
+          "usage": "chat",
+          "contextWindow": 131072,
+          "maxOutputTokens": 131072,
+          "tpmLimit": null,
+          "priority": 30
+        },
+        {
+          "id": "Llama-4-Maverick-17B-128E-Instruct",
+          "usage": "chat",
+          "contextWindow": 131072,
+          "maxOutputTokens": 4096,
+          "tpmLimit": null,
+          "priority": 40
+        },
+        {
+          "id": "MiniMax-M2.7",
+          "usage": "chat",
+          "contextWindow": 196608,
+          "maxOutputTokens": 196608,
+          "tpmLimit": null,
+          "priority": 50
+        },
+        {
+          "id": "DeepSeek-V3.2",
+          "usage": "chat",
+          "contextWindow": 32768,
+          "maxOutputTokens": 7168,
+          "tpmLimit": null,
+          "priority": 60
+        }
+      ]
+    }
+  }
+}
