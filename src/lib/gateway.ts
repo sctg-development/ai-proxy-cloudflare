@@ -18,12 +18,13 @@
 //
 // Forward requests to Cloudflare AI Gateway
 
-import type { AiConfig, AiProvider } from './ai-enc';
+import type { AiConfig, AiModel, AiProvider } from './ai-enc';
 import { resolveProviderEndpoint, resolveModelId, pickKey } from './ai-enc';
 
 export interface GatewayForwardRequest {
   model: string;
-  messages: Array<{ role: string; content: string }>;
+  messages?: Array<{ role: string; content: string }>;
+  input?: string;
   [key: string]: any;
 }
 
@@ -46,6 +47,7 @@ export async function forwardToCfAiGateway(
     accountId: string;
     aigToken: string;
     providerKey?: string;
+    modelUsage?: AiModel['usage'];
     debug?: boolean;
   },
 ): Promise<Response> {
@@ -61,9 +63,15 @@ export async function forwardToCfAiGateway(
   // Build gateway URL
   const gatewayUrl = new URL(endpoint);
   const requestPath = new URL(request.url).pathname;
-  const compatPathSuffix = requestPath.endsWith('/chat/completions')
-    ? '/chat/completions'
-    : null;
+  const compatPathSuffix = config.modelUsage === 'tts'
+    ? '/audio/speech'
+    : requestPath.endsWith('/audio/speech')
+      ? '/audio/speech'
+      : requestPath.endsWith('/chat/completions')
+        ? '/chat/completions'
+        : config.modelUsage === 'chat' || config.modelUsage === undefined
+          ? '/chat/completions'
+          : null;
 
   if (!compatPathSuffix) {
     throw new Error(`Unsupported compatibility route: ${requestPath}`);
@@ -102,10 +110,11 @@ export async function forwardToCfAiGateway(
       requestPath,
       provider: config.providerKey ?? 'unknown',
       gatewayUrl: gatewayUrl.toString(),
-      useGateway,
-      model: modelId,
-      stream: isStream,
-    }));
+        useGateway,
+        model: modelId,
+        modelUsage: config.modelUsage ?? 'chat',
+        stream: isStream,
+      }));
   }
 
   // Forward the request
@@ -138,14 +147,12 @@ export async function forwardToCfAiGateway(
     });
   }
 
-  // Non-streaming: buffer the entire response
-  const text = await response.text();
-  return new Response(text, {
+  // Non-streaming: preserve the upstream body and content type.
+  // Some providers (for example Groq TTS) return raw audio bytes directly.
+  return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
-    headers: new Headers({
-      'Content-Type': 'application/json',
-    }),
+    headers: new Headers(response.headers),
   });
 }
 

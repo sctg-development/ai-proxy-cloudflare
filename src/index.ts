@@ -27,7 +27,7 @@ import { Hono } from 'hono';
 import { logger } from 'hono/logger';
 import { cors } from 'hono/cors';
 
-import { decryptAiConfig, type AiConfig } from './lib/ai-enc';
+import { decryptAiConfig, type AiConfig, type AiModel } from './lib/ai-enc';
 import { validateUserKey, extractBearerToken } from './lib/auth';
 import { forwardToCfAiGateway, detectProvider } from './lib/gateway';
 import { checkBalance, deductBalance } from './lib/balance';
@@ -155,6 +155,10 @@ function isCryptoTokenValid(authHeader: string | null, expected: string): boolea
   if (!authHeader) return false;
   const match = authHeader.match(/^Bearer\s+(.+)$/i);
   return match ? match[1] === expected : false;
+}
+
+function findProviderModel(provider: AiConfig['providers'][string], modelId: string): AiModel | null {
+  return provider.models.find((model) => model.id === modelId) ?? null;
 }
 
 // ── Endpoints ─────────────────────────────────────────────────────
@@ -493,16 +497,40 @@ app.post('*', async (c) => {
     }
 
     // Validate payload structure
-    if (!payload.messages || !Array.isArray(payload.messages)) {
+    if (!payload.model) {
       return c.json(
-        { error: 'Missing or invalid messages array' },
+        { error: 'Missing model' },
         { status: 400 },
       );
     }
 
-    if (!payload.model) {
+    const selectedModel = findProviderModel(provider, String(payload.model));
+    if (!selectedModel) {
       return c.json(
-        { error: 'Missing model' },
+        { error: `Model '${String(payload.model)}' not found for provider '${providerKey}'` },
+        { status: 404 },
+      );
+    }
+
+    const modelUsage = selectedModel.usage ?? 'chat';
+
+    if (modelUsage === 'chat') {
+      if (!payload.messages || !Array.isArray(payload.messages)) {
+        return c.json(
+          { error: 'Missing or invalid messages array' },
+          { status: 400 },
+        );
+      }
+    } else if (modelUsage === 'tts') {
+      if (typeof payload.input !== 'string' || payload.input.trim().length === 0) {
+        return c.json(
+          { error: 'Missing or invalid input for text-to-speech request' },
+          { status: 400 },
+        );
+      }
+    } else {
+      return c.json(
+        { error: `Model usage '${modelUsage}' is not yet supported on this proxy route` },
         { status: 400 },
       );
     }
@@ -512,6 +540,7 @@ app.post('*', async (c) => {
       accountId: env.CLOUDFLARE_ACCOUNT_ID,
       aigToken: env.CLOUDFLARE_AIG_TOKEN,
       providerKey,
+      modelUsage,
       debug: env.DEBUG === 'true',
     });
 

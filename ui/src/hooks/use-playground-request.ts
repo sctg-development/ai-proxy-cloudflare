@@ -17,11 +17,17 @@
 // SOFTWARE.
 
 import { useCallback, useRef, useState } from 'react';
-import type { AiProvider } from '../types/ai-config';
-import type { PlaygroundMessage, PlaygroundPart } from '../types/playground-types';
+import type { AiModel, AiProvider } from '../types/ai-config';
+import type {
+  PlaygroundMessage,
+  PlaygroundPart,
+  PlaygroundTtsAudioPart,
+} from '../types/playground-types';
 import {
   buildDirectChatUrl,
+  buildDirectSpeechUrl,
   buildPlaygroundPayload,
+  buildPlaygroundSpeechPayload,
   extractAssistantParts,
   extractStreamedAssistantText,
 } from '../lib/playground/payload';
@@ -37,6 +43,7 @@ export interface SendPlaygroundRequestOptions {
   modelId: string;
   systemPrompt: string;
   messages: PlaygroundMessage[];
+  modelUsage?: AiModel['usage'];
   temperature: number;
   maxTokens: number;
   topP: number;
@@ -56,6 +63,44 @@ export interface PlaygroundRequestState {
   clearError: () => void;
   setError: (message: string) => void;
 }
+
+const isAudioContentType = (contentType: string | null): boolean => {
+  if (!contentType) return false;
+
+  const normalized = contentType.toLowerCase();
+  return normalized.startsWith('audio/')
+    || normalized.includes('application/octet-stream');
+};
+
+const extractFilenameFromContentDisposition = (contentDisposition: string | null): string | undefined => {
+  if (!contentDisposition) return undefined;
+
+  const utf8Match = contentDisposition.match(/filename\*\s*=\s*UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1]);
+    } catch {
+      return utf8Match[1];
+    }
+  }
+
+  const quotedMatch = contentDisposition.match(/filename\s*=\s*"([^"]+)"/i);
+  if (quotedMatch?.[1]) return quotedMatch[1];
+
+  const plainMatch = contentDisposition.match(/filename\s*=\s*([^;]+)/i);
+  return plainMatch?.[1]?.trim();
+};
+
+const arrayBufferToBase64 = (buffer: ArrayBuffer): string => {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+
+  return btoa(binary);
+};
 
 /**
  * Handles the HTTP request lifecycle for a single playground send action.
@@ -83,6 +128,7 @@ export const usePlaygroundRequest = (): PlaygroundRequestState => {
         modelId,
         systemPrompt,
         messages,
+        modelUsage,
         temperature,
         maxTokens,
         topP,
@@ -102,11 +148,15 @@ export const usePlaygroundRequest = (): PlaygroundRequestState => {
       try {
         const url = useMistralConversations
           ? buildMistralConversationsUrl(provider)
-          : buildDirectChatUrl(provider);
+          : modelUsage === 'tts'
+            ? buildDirectSpeechUrl(provider)
+            : buildDirectChatUrl(provider);
 
         const payload = useMistralConversations
           ? buildMistralConversationsPayload({ modelId, systemPrompt, messages, temperature, maxTokens, topP })
-          : buildPlaygroundPayload({ modelId, systemPrompt, messages, temperature, maxTokens, topP, stream });
+          : modelUsage === 'tts'
+            ? buildPlaygroundSpeechPayload({ provider, modelId, messages })
+            : buildPlaygroundPayload({ modelId, systemPrompt, messages, temperature, maxTokens, topP, stream });
 
         const response = await fetch(url, {
           method: 'POST',
@@ -118,10 +168,33 @@ export const usePlaygroundRequest = (): PlaygroundRequestState => {
           signal: controller.signal,
         });
 
+        const contentType = response.headers.get('content-type');
+        const contentDisposition = response.headers.get('content-disposition');
+
+        if (modelUsage === 'tts' && isAudioContentType(contentType)) {
+          const audioBuffer = await response.arrayBuffer();
+
+          if (!response.ok) {
+            throw new Error(`Provider failure (${response.status}): audio response could not be processed.`);
+          }
+
+          const audioPart: PlaygroundTtsAudioPart = {
+            type: 'tts_audio',
+            inlineData: {
+              mimeType: contentType?.split(';')[0]?.trim() || 'audio/wav',
+              data: arrayBufferToBase64(audioBuffer),
+            },
+            mimeType: contentType?.split(';')[0]?.trim() || 'audio/wav',
+            filename: extractFilenameFromContentDisposition(contentDisposition),
+          };
+
+          return [audioPart];
+        }
+
         const responseText = await response.text();
         let responseBody: unknown = responseText;
 
-        if (!useMistralConversations) {
+        if (!useMistralConversations && modelUsage !== 'tts') {
           // Streaming: reconstruct full text from SSE deltas.
           const streamPayload = payload as { stream?: boolean };
           if (streamPayload.stream) {

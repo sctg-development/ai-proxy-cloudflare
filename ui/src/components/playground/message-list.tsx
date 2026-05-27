@@ -2,18 +2,13 @@
 // Copyright (c) 2024-2026 Ronan Le Meillat - SCTG Development
 
 import React from 'react';
-import type {
-  PlaygroundMessage,
-  PlaygroundTtsProvider,
-} from '../../types/playground-types';
+import type { PlaygroundMessage } from '../../types/playground-types';
 import { MessageBubble } from './message-bubble';
 
 export interface MessageListProps {
   messages: PlaygroundMessage[];
   resumeFromIndex: number | null;
   onResumeFromIndex: (index: number) => void;
-  ttsProvider?: PlaygroundTtsProvider;
-  onError?: (message: string) => void;
   onRetry?: () => void;
   onRotateAndRetry?: () => void;
 }
@@ -27,8 +22,6 @@ export const MessageList: React.FC<MessageListProps> = ({
   messages,
   resumeFromIndex,
   onResumeFromIndex,
-  ttsProvider,
-  onError,
   onRetry,
   onRotateAndRetry,
 }) => {
@@ -63,8 +56,6 @@ export const MessageList: React.FC<MessageListProps> = ({
           message={message}
           index={index}
           onResume={() => onResumeFromIndex(index)}
-          ttsProvider={ttsProvider}
-          onError={onError}
           onRetry={index === lastIndex && lastIsError ? onRetry : undefined}
           onRotateAndRetry={index === lastIndex && lastIsError ? onRotateAndRetry : undefined}
         />

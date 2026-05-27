@@ -7,7 +7,6 @@ import { Download, RefreshCcw, RefreshCw, RotateCcw } from 'lucide-react';
 import type {
   PlaygroundMessage,
   PlaygroundPart,
-  PlaygroundTtsProvider,
 } from '../../types/playground-types';
 import { renderMarkdown } from '../../lib/utils/markdown-utils';
 import { createMarkedRenderer } from '../../lib/utils/markdown-utils';
@@ -15,14 +14,10 @@ import { extractGeneratedFiles, getMarkdownFilename } from '../../lib/utils/file
 import { formatBytes } from '../../lib/playground/multimodal-files';
 import { CodeBlock } from './code-block';
 import { ImageModal } from './image-modal';
-import { TextToSpeechButton } from './text-to-speech-button';
-
 interface MessageBubbleProps {
   message: PlaygroundMessage;
   index: number;
   onResume: () => void;
-  ttsProvider?: PlaygroundTtsProvider;
-  onError?: (message: string) => void;
   /** When provided, a Retry button appears on assistant error messages. */
   onRetry?: () => void;
   /** When provided, a Rotate & retry button appears on assistant error messages. */
@@ -52,13 +47,25 @@ const downloadTextFile = (filename: string, content: string) => {
   URL.revokeObjectURL(url);
 };
 
+const downloadBinaryFile = (filename: string, mimeType: string, base64Data: string) => {
+  const binary = atob(base64Data);
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  const blob = new Blob([bytes], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+
+  link.href = url;
+  link.download = filename;
+  link.click();
+
+  URL.revokeObjectURL(url);
+};
+
 /** Renders a single chat message with all its parts and action buttons. */
 export const MessageBubble: React.FC<MessageBubbleProps> = ({
   message,
   index,
   onResume,
-  ttsProvider,
-  onError,
   onRetry,
   onRotateAndRetry,
 }) => {
@@ -173,6 +180,46 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
           );
         }
 
+        if (part.type === 'tts_audio') {
+          const src = part.inlineData
+            ? `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`
+            : part.audioUrl;
+          const defaultExtension = part.inlineData?.mimeType.split('/')[1] ?? 'wav';
+          const filename = part.filename ?? `assistant-audio-${index + 1}.${defaultExtension}`;
+
+          if (!src) return null;
+
+          return (
+            <div key={partIndex} className="mt-2 space-y-2">
+              <audio controls src={src}>
+                <track kind="captions" />
+              </audio>
+              {part.transcript && (
+                <p className="text-xs text-muted-foreground italic">{part.transcript}</p>
+              )}
+              {part.inlineData ? (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onPress={() => downloadBinaryFile(filename, part.inlineData!.mimeType, part.inlineData!.data)}
+                >
+                  <Download className="mr-2 h-3.5 w-3.5" />
+                  Download audio
+                </Button>
+              ) : part.audioUrl ? (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onPress={() => void downloadRemoteImage(part.audioUrl!, filename)}
+                >
+                  <Download className="mr-2 h-3.5 w-3.5" />
+                  Download audio
+                </Button>
+              ) : null}
+            </div>
+          );
+        }
+
         return null;
       })}
 
@@ -192,17 +239,14 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
       {/* Action buttons */}
       <div className="mt-2 flex flex-wrap justify-end gap-2">
         {message.role === 'assistant' && assistantText && !isError && (
-          <>
-            <TextToSpeechButton text={assistantText} ttsProvider={ttsProvider} onError={onError} />
-            <Button
-              size="sm"
-              variant="ghost"
-              onPress={() => downloadTextFile(getMarkdownFilename(assistantText, index), assistantText)}
-            >
-              <Download className="mr-2 h-3.5 w-3.5" />
-              Markdown
-            </Button>
-          </>
+          <Button
+            size="sm"
+            variant="ghost"
+            onPress={() => downloadTextFile(getMarkdownFilename(assistantText, index), assistantText)}
+          >
+            <Download className="mr-2 h-3.5 w-3.5" />
+            Markdown
+          </Button>
         )}
         {!isError && generatedFiles.map((file) => (
           <Button

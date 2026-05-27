@@ -37,7 +37,7 @@ export interface AiKey {
 
 export interface AiModel {
   id: string;
-  usage?: 'chat' | 'embedding';
+  usage?: 'chat' | 'embedding' | 'transcription' | 'tts' | 'image-generation';
   contextWindow: number;
   maxOutputTokens: number;
   tpmLimit: number | null;

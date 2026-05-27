@@ -26,6 +26,7 @@ import type {
   PlaygroundMessage,
   PlaygroundPart,
   PlaygroundTextPart,
+  PlaygroundTtsAudioPart,
 } from '../../types/playground-types';
 
 // ---------------------------------------------------------------------------
@@ -42,6 +43,16 @@ export const buildDirectChatUrl = (provider: AiProvider): string => {
   if (base.endsWith('/chat/completions')) return base;
   if (/(?:\/v\d+(?:beta\d*)?)$/i.test(base)) return `${base}/chat/completions`;
   return `${base}/v1/chat/completions`;
+};
+
+/**
+ * Ensures the provider endpoint resolves to the OpenAI-compatible speech path.
+ */
+export const buildDirectSpeechUrl = (provider: AiProvider): string => {
+  const base = provider.endpoint.replace(/\/+$/, '');
+  if (base.endsWith('/audio/speech')) return base;
+  if (/(?:\/v\d+(?:beta\d*)?)$/i.test(base)) return `${base}/audio/speech`;
+  return `${base}/v1/audio/speech`;
 };
 
 // ---------------------------------------------------------------------------
@@ -135,6 +146,12 @@ export interface BuildPlaygroundPayloadOptions {
   multimodal?: boolean;
 }
 
+export interface BuildPlaygroundSpeechPayloadOptions {
+  provider: AiProvider;
+  modelId: string;
+  messages: PlaygroundMessage[];
+}
+
 /**
  * Builds the OpenAI-compatible JSON body for a chat completions request.
  */
@@ -173,6 +190,32 @@ export const buildPlaygroundPayload = ({
     max_tokens: maxTokens,
     top_p: topP,
     stream,
+  };
+};
+
+const resolveDefaultSpeechVoice = (provider: AiProvider, modelId: string): string => {
+  const lowerModelId = modelId.toLowerCase();
+
+  if (provider.protocol === 'openai' && lowerModelId.includes('canopylabs/orpheus')) {
+    return 'autumn';
+  }
+
+  return 'alloy';
+};
+
+export const buildPlaygroundSpeechPayload = ({
+  provider,
+  modelId,
+  messages,
+}: BuildPlaygroundSpeechPayloadOptions) => {
+  const latestUserMessage = [...messages].reverse().find((message) => message.role === 'user');
+  const input = latestUserMessage ? playgroundPartsToText(latestUserMessage.parts).trim() : '';
+
+  return {
+    model: modelId,
+    input,
+    voice: resolveDefaultSpeechVoice(provider, modelId),
+    response_format: 'wav',
   };
 };
 
@@ -255,12 +298,127 @@ export const extractAssistantText = (responseBody: unknown): string => {
   return JSON.stringify(responseBody, null, 2);
 };
 
+const normalizeAudioMimeType = (value: unknown): string => {
+  if (typeof value !== 'string' || value.trim().length === 0) return 'audio/wav';
+  return value.includes('/') ? value : `audio/${value}`;
+};
+
+const audioPartFromChoiceMessage = (responseBody: unknown): PlaygroundTtsAudioPart | null => {
+  if (!responseBody || typeof responseBody !== 'object') return null;
+
+  const typed = responseBody as {
+    choices?: Array<{
+      message?: {
+        audio?: {
+          data?: string;
+          format?: string;
+          mime_type?: string;
+          url?: string;
+          transcript?: string;
+          filename?: string;
+        };
+        content?: Array<{
+          type?: string;
+          audio?: {
+            data?: string;
+            format?: string;
+            mime_type?: string;
+            url?: string;
+            transcript?: string;
+            filename?: string;
+          };
+          audio_url?: { url?: string };
+        }>;
+      };
+    }>;
+  };
+
+  const message = typed.choices?.[0]?.message;
+  const directAudio = message?.audio;
+  if (directAudio && (typeof directAudio.data === 'string' || typeof directAudio.url === 'string')) {
+    return {
+      type: 'tts_audio',
+      ...(typeof directAudio.data === 'string'
+        ? {
+            inlineData: {
+              mimeType: normalizeAudioMimeType(directAudio.mime_type ?? directAudio.format),
+              data: directAudio.data,
+            },
+          }
+        : {}),
+      ...(typeof directAudio.url === 'string' ? { audioUrl: directAudio.url } : {}),
+      ...(typeof directAudio.mime_type === 'string' || typeof directAudio.format === 'string'
+        ? { mimeType: normalizeAudioMimeType(directAudio.mime_type ?? directAudio.format) }
+        : {}),
+      ...(typeof directAudio.filename === 'string' ? { filename: directAudio.filename } : {}),
+      ...(typeof directAudio.transcript === 'string' ? { transcript: directAudio.transcript } : {}),
+    };
+  }
+
+  const contentAudio = Array.isArray(message?.content) ? message.content.find((part) => (
+    part?.type === 'output_audio' ||
+    part?.type === 'audio' ||
+    typeof part?.audio?.data === 'string' ||
+    typeof part?.audio?.url === 'string' ||
+    typeof part?.audio_url?.url === 'string'
+  )) : null;
+
+  if (!contentAudio) return null;
+
+  const audio = contentAudio.audio;
+  const remoteUrl = contentAudio.audio_url?.url ?? audio?.url;
+
+  if (audio && typeof audio.data === 'string') {
+    return {
+      type: 'tts_audio',
+      inlineData: {
+        mimeType: normalizeAudioMimeType(audio.mime_type ?? audio.format),
+        data: audio.data,
+      },
+      ...(typeof remoteUrl === 'string' ? { audioUrl: remoteUrl } : {}),
+      ...(typeof audio.mime_type === 'string' || typeof audio.format === 'string'
+        ? { mimeType: normalizeAudioMimeType(audio.mime_type ?? audio.format) }
+        : {}),
+      ...(typeof audio.filename === 'string' ? { filename: audio.filename } : {}),
+      ...(typeof audio.transcript === 'string' ? { transcript: audio.transcript } : {}),
+    };
+  }
+
+  if (typeof remoteUrl === 'string') {
+    return {
+      type: 'tts_audio',
+      audioUrl: remoteUrl,
+      ...(audio?.mime_type || audio?.format
+        ? { mimeType: normalizeAudioMimeType(audio.mime_type ?? audio.format) }
+        : {}),
+      ...(typeof audio?.filename === 'string' ? { filename: audio.filename } : {}),
+      ...(typeof audio?.transcript === 'string' ? { transcript: audio.transcript } : {}),
+    };
+  }
+
+  return null;
+};
+
 /**
  * Converts a provider response body into playground parts.
- * Currently produces a single text part; extensible for image responses later.
+ * Prefers model-generated audio when present, and preserves assistant text when available.
  */
 export const extractAssistantParts = (responseBody: unknown): PlaygroundPart[] => {
+  const parts: PlaygroundPart[] = [];
   const text = extractAssistantText(responseBody);
-  const part: PlaygroundTextPart = { type: 'text', text: text || 'No usable assistant response.' };
-  return [part];
+  const audioPart = audioPartFromChoiceMessage(responseBody);
+
+  if (text) {
+    parts.push({ type: 'text', text } satisfies PlaygroundTextPart);
+  }
+
+  if (audioPart) {
+    parts.push(audioPart);
+  }
+
+  if (parts.length === 0) {
+    parts.push({ type: 'text', text: 'No usable assistant response.' } satisfies PlaygroundTextPart);
+  }
+
+  return parts;
 };

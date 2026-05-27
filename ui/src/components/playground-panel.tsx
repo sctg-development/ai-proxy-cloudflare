@@ -31,7 +31,6 @@ import type { AiConfig } from '../types/ai-config';
 import type {
   PlaygroundMessage,
   PlaygroundTranscriber,
-  PlaygroundTtsProvider,
 } from '../types/playground-types';
 import {
   DEFAULT_CONVERSATION_ID,
@@ -63,7 +62,6 @@ export interface PlaygroundPanelProps {
   conversationId?: string;
   initialHistory?: PlaygroundMessage[];
   transcriber?: PlaygroundTranscriber;
-  ttsProvider?: PlaygroundTtsProvider;
 }
 
 const isPlaygroundMessageArray = (value: unknown): value is PlaygroundMessage[] => {
@@ -84,7 +82,6 @@ export const PlaygroundPanel: React.FC<PlaygroundPanelProps> = ({
   conversationId: _conversationId = DEFAULT_CONVERSATION_ID,
   initialHistory,
   transcriber,
-  ttsProvider,
 }) => {
   // Inference parameters
   const [systemPrompt, setSystemPrompt] = useState(DEFAULT_SYSTEM_PROMPT);
@@ -189,18 +186,19 @@ export const PlaygroundPanel: React.FC<PlaygroundPanelProps> = ({
     selection.advanceRoundRobinKey();
 
     try {
-      const assistantParts = await request.sendRequest({
-        provider: selection.provider,
-        providerKey,
-        modelId: selection.modelId,
-        systemPrompt,
-        messages: nextMessages,
-        temperature,
-        maxTokens,
-        topP,
-        stream: streamEnabled,
-        enableImageGeneration,
-      });
+        const assistantParts = await request.sendRequest({
+          provider: selection.provider,
+          providerKey,
+          modelId: selection.modelId,
+          systemPrompt,
+          messages: nextMessages,
+          modelUsage: selection.activeModel?.usage,
+          temperature,
+          maxTokens,
+          topP,
+          stream: streamEnabled,
+          enableImageGeneration,
+        });
       conversation.appendAssistantMessage(nextMessages, assistantParts);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Playground request failed';
@@ -299,18 +297,19 @@ export const PlaygroundPanel: React.FC<PlaygroundPanelProps> = ({
     if (rotateKey) selection.advanceRoundRobinKey();
 
     try {
-      const assistantParts = await request.sendRequest({
-        provider: selection.provider,
-        providerKey,
-        modelId: selection.modelId,
-        systemPrompt,
-        messages: messagesWithoutError,
-        temperature,
-        maxTokens,
-        topP,
-        stream: streamEnabled,
-        enableImageGeneration,
-      });
+        const assistantParts = await request.sendRequest({
+          provider: selection.provider,
+          providerKey,
+          modelId: selection.modelId,
+          systemPrompt,
+          messages: messagesWithoutError,
+          modelUsage: selection.activeModel?.usage,
+          temperature,
+          maxTokens,
+          topP,
+          stream: streamEnabled,
+          enableImageGeneration,
+        });
       conversation.appendAssistantMessage(messagesWithoutError, assistantParts);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Playground request failed';
@@ -441,8 +440,6 @@ export const PlaygroundPanel: React.FC<PlaygroundPanelProps> = ({
                   messages={conversation.messages}
                   resumeFromIndex={conversation.resumeFromIndex}
                   onResumeFromIndex={handleResumeFromIndex}
-                  ttsProvider={ttsProvider}
-                  onError={request.setError}
                   onRetry={() => void retryLastRequest(false)}
                   onRotateAndRetry={() => void retryLastRequest(true)}
                 />

@@ -67,7 +67,7 @@ export const usePlaygroundSelection = (
   const chatModels = useMemo<AiModel[]>(() => {
     if (!provider) return [];
     return provider.models
-      .filter((m) => m.usage === 'chat')
+      .filter((m) => m.usage === 'chat' || (m.outputModalities ?? []).includes('audio'))
       .slice()
       .sort((a, b) => a.priority - b.priority);
   }, [provider]);

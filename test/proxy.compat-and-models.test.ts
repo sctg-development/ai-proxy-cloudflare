@@ -133,6 +133,10 @@ function selectLowestPriorityChatModel(provider: AiConfigType['providers'][strin
   return [...chatModels].sort((left, right) => left.priority - right.priority)[0];
 }
 
+function isProxyRoutableUsage(usage: AiConfigType['providers'][string]['models'][number]['usage']) {
+  return usage === 'chat' || usage === 'tts';
+}
+
 describe('ai-proxy worker compatibility and model routing', () => {
   const originalFetch = globalThis.fetch;
   const usersMap = users as UsersMap;
@@ -179,6 +183,7 @@ describe('ai-proxy worker compatibility and model routing', () => {
 
   beforeEach(() => {
     vi.restoreAllMocks();
+    vi.spyOn(env.PROXY_RATE_LIMITER, 'limit').mockResolvedValue({ success: true } as Awaited<ReturnType<typeof env.PROXY_RATE_LIMITER.limit>>);
     // Mock global fetch to intercept outbound requests to Cloudflare AI Gateway
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -267,22 +272,39 @@ describe('ai-proxy worker compatibility and model routing', () => {
   it('route tous les modèles déclarés dans ai.json via la gateway avec préfixe provider', async () => {
     const config = aiConfig as AiConfigType;
 
-    // Test every model in every provider to ensure proper routing
+    // Test every gateway-backed chat/tts model to ensure proper routing
     for (const [providerKey, provider] of Object.entries(config.providers)) {
+      if (!provider.gatewayEndpoint || !provider.gatewayModelPrefix) {
+        continue;
+      }
+
       for (const model of provider.models) {
+        if (!isProxyRoutableUsage(model.usage)) {
+          continue;
+        }
+
         vi.mocked(globalThis.fetch).mockClear();
 
-        const req = new Request(`https://ai-proxy.inet.pp.ua/${providerKey}/v1/chat/completions`, {
+        const isTts = model.usage === 'tts';
+        const routePath = isTts ? 'audio/speech' : 'chat/completions';
+        const requestBody = isTts
+          ? {
+              model: model.id,
+              input: `validate ${providerKey}/${model.id}`,
+            }
+          : {
+              model: model.id,
+              messages: [{ role: 'user', content: `validate ${providerKey}/${model.id}` }],
+              stream: false,
+            };
+
+        const req = new Request(`https://ai-proxy.inet.pp.ua/${providerKey}/v1/${routePath}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${validUserToken}`,
           },
-          body: JSON.stringify({
-            model: model.id,
-            messages: [{ role: 'user', content: `validate ${providerKey}/${model.id}` }],
-            stream: false,
-          }),
+          body: JSON.stringify(requestBody),
         });
 
         const res = await SELF.fetch(req);
@@ -294,12 +316,11 @@ describe('ai-proxy worker compatibility and model routing', () => {
         const gatewayCall = vi.mocked(globalThis.fetch).mock.calls[0];
         const outboundUrl = String(gatewayCall[0]);
         const outboundBody = JSON.parse(String(gatewayCall[1]?.body));
-        // Ensure model ID is properly prefixed with provider's gateway prefix
         const expectedModel = model.id.startsWith(`${provider.gatewayModelPrefix}/`)
           ? model.id
           : `${provider.gatewayModelPrefix}/${model.id}`;
 
-        expect(outboundUrl).toContain('/compat/chat/completions');
+        expect(outboundUrl).toContain(isTts ? '/compat/audio/speech' : '/compat/chat/completions');
         expect(outboundBody.model).toBe(expectedModel);
       }
     }
@@ -308,10 +329,10 @@ describe('ai-proxy worker compatibility and model routing', () => {
   it('interroge le modèle de chat à priorité minimale pour chaque provider avec clés non expirées', async () => {
     const config = aiConfig as AiConfigType;
 
-    // Test the lowest priority chat model for each provider with active keys
+    // Test the lowest priority chat model for each gateway-backed provider with active keys
     for (const [providerKey, provider] of Object.entries(config.providers)) {
-      if (!hasNonExpiredKey(provider)) {
-        continue; // Skip providers with only expired keys
+      if (!hasNonExpiredKey(provider) || !provider.gatewayEndpoint || !provider.gatewayModelPrefix) {
+        continue; // Skip providers with only expired keys or without gateway routing
       }
 
       const model = selectLowestPriorityChatModel(provider);
