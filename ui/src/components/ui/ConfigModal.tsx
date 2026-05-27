@@ -95,7 +95,9 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({
     }
     if (type === 'model' && editTarget.itemId) {
       const model = provider.models.find((m) => m.id === editTarget.itemId);
-      return String((((model as unknown) as Record<string, unknown> | undefined))?.[fieldName] ?? '');
+      const val = (((model as unknown) as Record<string, unknown> | undefined))?.[fieldName];
+      if (Array.isArray(val)) return JSON.stringify(val);
+      return String(val ?? '');
     }
     if (type === 'key' && editTarget.itemId !== undefined) {
       const apiKey = provider.keys[Number(editTarget.itemId)];
@@ -137,13 +139,24 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({
       }
       newConfig.providers[providerId] = providerBody;
     } else if (type === 'model' && editTarget) {
+      const usageValues = ['chat', 'embedding', 'transcription', 'tts', 'image-generation'] as const;
+      const validUsage = usageValues.find((u) => u === data.usage) ?? 'chat';
+
+      // Collect modality checkboxes (FormData entries named inputModalities or outputModalities).
+      const rawInputModalities = formData.getAll('inputModalities') as string[];
+      const rawOutputModalities = formData.getAll('outputModalities') as string[];
+      const inputModalities = rawInputModalities as AiModel['inputModalities'];
+      const outputModalities = rawOutputModalities as AiModel['outputModalities'];
+
       const model: AiModel = {
         id: data.id,
-        usage: data.usage === 'embedding' ? 'embedding' : 'chat',
+        usage: validUsage,
         contextWindow: Number(data.contextWindow),
         maxOutputTokens: Number(data.maxOutputTokens),
         priority: Number(data.priority),
         tpmLimit: data.tpmLimit ? Number(data.tpmLimit) : null,
+        ...(rawInputModalities.length > 0 ? { inputModalities } : {}),
+        ...(rawOutputModalities.length > 0 ? { outputModalities } : {}),
       };
 
       const models = newConfig.providers[editTarget.providerId].models;
@@ -260,7 +273,7 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({
                       defaultValue={getInitialValue('usage') || 'chat'}
                     >
                       <Label>Usage</Label>
-                      <Input placeholder="chat or embedding" />
+                      <Input placeholder="chat, embedding, transcription, tts, image-generation" />
                     </TextField>
 
                     <div className="grid grid-cols-2 gap-4">
@@ -299,6 +312,52 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({
                       <Label>TPM Limit (optional)</Label>
                       <Input type="number" min="1" placeholder="Leave empty for unlimited" />
                     </TextField>
+
+                    {/* Option D — manual modality override */}
+                    {(() => {
+                      const currentInput: string[] = JSON.parse(
+                        getInitialValue('inputModalities') || '["text"]',
+                      );
+                      const currentOutput: string[] = JSON.parse(
+                        getInitialValue('outputModalities') || '["text"]',
+                      );
+                      return (
+                        <>
+                          <div>
+                            <Label className="mb-1 block text-sm">Input modalities</Label>
+                            <div className="flex flex-wrap gap-3">
+                              {(['text', 'image', 'audio', 'video'] as const).map((m) => (
+                                <label key={m} className="flex items-center gap-1.5 text-sm">
+                                  <input
+                                    type="checkbox"
+                                    name="inputModalities"
+                                    value={m}
+                                    defaultChecked={currentInput.includes(m)}
+                                  />
+                                  {m}
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+                          <div>
+                            <Label className="mb-1 block text-sm">Output modalities</Label>
+                            <div className="flex flex-wrap gap-3">
+                              {(['text', 'image', 'audio'] as const).map((m) => (
+                                <label key={m} className="flex items-center gap-1.5 text-sm">
+                                  <input
+                                    type="checkbox"
+                                    name="outputModalities"
+                                    value={m}
+                                    defaultChecked={currentOutput.includes(m)}
+                                  />
+                                  {m}
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+                        </>
+                      );
+                    })()}
                   </>
                 )}
 

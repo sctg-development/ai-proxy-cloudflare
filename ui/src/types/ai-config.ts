@@ -33,6 +33,12 @@ export type AiProtocol =
   | 'openrouter'
   | 'morph';
 
+/** Supported input modalities for a model. */
+export type AiModalityInput = 'text' | 'image' | 'audio' | 'video';
+
+/** Supported output modalities for a model. */
+export type AiModalityOutput = 'text' | 'image' | 'audio';
+
 /**
  * Represents an API key in the vault.
  */
@@ -51,8 +57,13 @@ export interface AiKey {
 export interface AiModel {
   /** The model identifier (e.g., 'gpt-4') */
   id: string;
-  /** API surface this model should be used with. */
-  usage: 'chat' | 'embedding';
+  /**
+   * API surface this model should be used with.
+   * `chat` and `embedding` are the two original proxy-routing classes.
+   * `transcription`, `tts`, and `image-generation` extend the type for
+   * specialized models such as Whisper, Voxtral-TTS, and DALL-E.
+   */
+  usage: 'chat' | 'embedding' | 'transcription' | 'tts' | 'image-generation';
   /** Context window size in tokens */
   contextWindow: number;
   /** Maximum output tokens allowed */
@@ -65,6 +76,16 @@ export interface AiModel {
   tags?: string[];
   /** Optional prefix for gateway routing */
   gatewayPrefix?: string;
+  /**
+   * Input modalities the model accepts. When absent the playground assumes
+   * `['text']` for backward compatibility with existing configs.
+   */
+  inputModalities?: AiModalityInput[];
+  /**
+   * Output modalities the model can produce. When absent the playground
+   * assumes `['text']` for backward compatibility with existing configs.
+   */
+  outputModalities?: AiModalityOutput[];
 }
 
 /**

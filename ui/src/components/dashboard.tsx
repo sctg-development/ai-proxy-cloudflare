@@ -507,7 +507,7 @@ export const Dashboard: React.FC = () => {
         )}
 
         {showPlayground ? (
-          <PlaygroundPanel config={activeConfig} />
+          <PlaygroundPanel activeConfig={activeConfig} />
         ) : (
           /*
            * Top-level tabs. Currently only "Providers" exists but the tab bar

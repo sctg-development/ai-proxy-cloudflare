@@ -18,22 +18,19 @@
 /**
  * @file Provider model discovery for the vault UI.
  *
- * Each provider exposes its catalogue with slightly different response shapes:
- * OpenAI-compatible APIs usually return `data`, Gemini returns `models`,
- * Anthropic paginates with `data` but omits token limits, and OpenRouter nests
- * provider-specific limits under `top_provider`.
+ * Each provider exposes its catalogue with slightly different response shapes.
+ * This module normalises them into the vault's `AiModel` shape, now including
+ * `inputModalities` and `outputModalities` using a three-stage pipeline:
  *
- * This module keeps those differences out of React components. It always
- * returns the vault's normalized `AiModel` shape, with:
- * - `usage`: only `chat` or `embedding`, because those are the proxy-supported
- *   routing classes today.
- * - `contextWindow`: the maximum input+output context when the provider gives
- *   one, or a documented fallback for providers whose list endpoint is sparse.
- * - `maxOutputTokens`: the provider's generation cap when exposed; embedding
- *   models use `0` because they do not generate completion tokens.
+ *   B — Provider-specific field mapping (Mistral capabilities, OpenRouter
+ *       architecture, Gemini supportedGenerationMethods, Anthropic family).
+ *   C — Heuristic ID patterns as a fallback for providers with sparse metadata
+ *       (Groq, SambaNova, generic OpenAI-compat proxies).
+ *
+ * Option D (manual override) is handled in the ConfigModal UI.
  */
 
-import type { AiModel, AiProvider } from '../types/ai-config';
+import type { AiModel, AiModalityInput, AiModalityOutput, AiProvider } from '../types/ai-config';
 
 /** Providers whose public APIs are explicitly handled by this file. */
 export type SupportedDiscoveryProvider =
@@ -59,12 +56,6 @@ type JsonRecord = Record<string, unknown>;
 
 /**
  * Fetches and normalizes the model catalogue for one provider.
- *
- * @param providerId The key used in `ai.json.providers`.
- * @param provider The provider configuration from the current vault.
- * @param apiKey A non-expired API key selected by the user/config.
- * @param previousModels Existing models, used only to preserve user ordering
- *   when a fetched model already exists in the vault.
  */
 export async function discoverProviderModels(
   providerId: string,
@@ -99,7 +90,6 @@ export async function discoverProviderModels(
 
 /**
  * Returns true when the UI knows how to query the provider directly.
- * Unknown providers can still be edited manually.
  */
 export function canDiscoverProviderModels(providerId: string, provider: AiProvider): boolean {
   return isSupportedDiscoveryProvider(canonicalProviderId(providerId, provider));
@@ -107,7 +97,6 @@ export function canDiscoverProviderModels(providerId: string, provider: AiProvid
 
 /**
  * Builds a compact label for the API key used by the sync action.
- * The full key is never rendered into the DOM.
  */
 export function maskApiKey(key: string): string {
   if (key.length <= 12) return `${key.slice(0, 4)}…`;
@@ -121,8 +110,7 @@ export function renumberPriorities(models: AiModel[]): AiModel[] {
 
 /**
  * Infers the provider implementation from the vault key, protocol, endpoint,
- * and gateway prefix. This makes sync robust when users name providers like
- * `openai-primary` or `team-groq` instead of exactly `openai` or `groq`.
+ * and gateway prefix.
  */
 function canonicalProviderId(
   providerId: string,
@@ -148,76 +136,67 @@ function canonicalProviderId(
 
 function isSupportedDiscoveryProvider(providerId: string): providerId is SupportedDiscoveryProvider {
   return [
-    'groq',
-    'sambanova',
-    'anthropic',
-    'gemini',
-    'mistral',
-    'openrouter',
-    'openai',
-    'morph',
+    'groq', 'sambanova', 'anthropic', 'gemini', 'mistral', 'openrouter', 'openai', 'morph',
   ].includes(providerId);
 }
 
 /**
- * Applies stable priorities after a refresh:
- * - known models keep their existing relative ordering;
- * - newly discovered models are appended alphabetically inside their usage
- *   class so chat models remain ahead of embeddings by default.
+ * Applies stable priorities after a refresh.
+ * Known models keep their existing relative ordering; new models are appended
+ * alphabetically with chat models preceding embeddings.
  */
 function withStablePriority(
   result: ProviderModelDiscoveryResult,
   previousModels: AiModel[],
 ): ProviderModelDiscoveryResult {
-  const previousOrder = new Map(previousModels.map((model, index) => [model.id, index]));
-  const sorted = [...dedupeModels(result.models)].sort((left, right) => {
-    const leftKnown = previousOrder.get(left.id);
-    const rightKnown = previousOrder.get(right.id);
-    if (leftKnown !== undefined && rightKnown !== undefined) return leftKnown - rightKnown;
-    if (leftKnown !== undefined) return -1;
-    if (rightKnown !== undefined) return 1;
-    if (left.usage !== right.usage) return left.usage === 'chat' ? -1 : 1;
-    return left.id.localeCompare(right.id);
+  const previousOrder = new Map(previousModels.map((m, i) => [m.id, i]));
+  const usageOrder: Record<AiModel['usage'], number> = {
+    chat: 0,
+    transcription: 1,
+    tts: 2,
+    'image-generation': 3,
+    embedding: 4,
+  };
+  const sorted = [...dedupeModels(result.models)].sort((a, b) => {
+    const aKnown = previousOrder.get(a.id);
+    const bKnown = previousOrder.get(b.id);
+    if (aKnown !== undefined && bKnown !== undefined) return aKnown - bKnown;
+    if (aKnown !== undefined) return -1;
+    if (bKnown !== undefined) return 1;
+    const usageDiff = (usageOrder[a.usage] ?? 99) - (usageOrder[b.usage] ?? 99);
+    if (usageDiff !== 0) return usageDiff;
+    return a.id.localeCompare(b.id);
   });
 
-  return {
-    models: renumberPriorities(sorted),
-    notes: result.notes,
-  };
+  return { models: renumberPriorities(sorted), notes: result.notes };
 }
 
-/** Removes duplicate model IDs while keeping the first normalized record. */
 function dedupeModels(models: AiModel[]): AiModel[] {
   const seen = new Set<string>();
-  return models.filter((model) => {
-    if (seen.has(model.id)) return false;
-    seen.add(model.id);
+  return models.filter((m) => {
+    if (seen.has(m.id)) return false;
+    seen.add(m.id);
     return true;
   });
 }
 
-/** Fetches and parses JSON with provider-aware error messages. */
 async function fetchJson(url: URL, init: RequestInit, providerName: string): Promise<unknown> {
   const response = await fetch(url, init);
   if (!response.ok) {
     const errorText = await response.text().catch(() => '');
     throw new Error(
-      `${providerName}: ${response.status} ${response.statusText}${
-        errorText ? ` — ${errorText.slice(0, 240)}` : ''
-      }`,
+      `${providerName}: ${response.status} ${response.statusText}${errorText ? ` — ${errorText.slice(0, 240)}` : ''}`,
     );
   }
   return response.json();
 }
 
-/** Returns a provider base URL without trailing slashes or endpoint suffixes. */
 function providerBaseUrl(provider: AiProvider, fallback: string): URL {
   const rawEndpoint = provider.endpoint || fallback;
   const endpoint = rawEndpoint.endsWith('/') ? rawEndpoint.slice(0, -1) : rawEndpoint;
   return new URL(endpoint);
 }
 
-/** Appends `/models` to OpenAI-compatible base URLs without duplicating it. */
 function modelsUrl(provider: AiProvider, fallback: string): URL {
   const url = providerBaseUrl(provider, fallback);
   url.pathname = url.pathname
@@ -229,19 +208,18 @@ function modelsUrl(provider: AiProvider, fallback: string): URL {
   return url;
 }
 
-/**
- * Handles Groq and SambaNova, which both expose useful model limits through
- * an OpenAI-compatible `GET /models` response.
- */
+// ---------------------------------------------------------------------------
+// Option B — Provider-specific field extraction
+// ---------------------------------------------------------------------------
+
 async function fetchOpenAiCompatibleModels(
   provider: AiProvider,
   apiKey: string,
   providerName: 'groq' | 'sambanova',
 ): Promise<ProviderModelDiscoveryResult> {
-  const fallback =
-    providerName === 'groq'
-      ? 'https://api.groq.com/openai/v1'
-      : 'https://api.sambanova.ai/v1';
+  const fallback = providerName === 'groq'
+    ? 'https://api.groq.com/openai/v1'
+    : 'https://api.sambanova.ai/v1';
   const payload = await fetchJson(
     modelsUrl(provider, fallback),
     { headers: { Authorization: `Bearer ${apiKey}` } },
@@ -250,14 +228,9 @@ async function fetchOpenAiCompatibleModels(
   const models = arrayFromData(payload).map((item) =>
     normalizeFromOpenAiCompatible(item, 'chat'),
   );
-
   return { models, notes: [] };
 }
 
-/**
- * Anthropic's List Models endpoint returns availability metadata but not
- * context/output limits, so documented limits are applied by model family.
- */
 async function fetchAnthropicModels(
   provider: AiProvider,
   apiKey: string,
@@ -272,25 +245,27 @@ async function fetchAnthropicModels(
     },
     'anthropic',
   );
+  // All Claude 3+ models support vision (image input).
   const models = arrayFromData(payload).map((item) => {
     const id = stringField(item, 'id');
     const limits = anthropicLimits(id);
-    return model(id, 'chat', limits.contextWindow, limits.maxOutputTokens, null);
+    return model(
+      id,
+      'chat',
+      limits.contextWindow,
+      limits.maxOutputTokens,
+      null,
+      ['text', 'image'],  // B: Anthropic documents all Claude 3+ as vision-capable
+      ['text'],
+    );
   });
 
   return {
     models,
-    notes: [
-      'Anthropic does not return limits in /v1/models; the limits come from the official Claude family table.',
-    ],
+    notes: ['Anthropic does not return limits in /v1/models; limits come from the Claude family table.'],
   };
 }
 
-/**
- * Gemini returns rich per-model metadata directly from `GET /v1beta/models`.
- * The API key is passed as `?key=...`, which is the documented REST style and
- * avoids custom auth headers in browsers.
- */
 async function fetchGeminiModels(
   provider: AiProvider,
   apiKey: string,
@@ -305,23 +280,27 @@ async function fetchGeminiModels(
       const id = rawName.replace(/^models\//, '');
       const methods = stringArrayField(item, 'supportedGenerationMethods');
       const isEmbedding =
-        methods.some((method) => method.toLowerCase().includes('embed')) ||
+        methods.some((m) => m.toLowerCase().includes('embed')) ||
         id.toLowerCase().includes('embedding');
       const contextWindow = numberField(item, 'inputTokenLimit') ?? 0;
       const maxOutputTokens = isEmbedding ? 0 : numberField(item, 'outputTokenLimit') ?? 0;
-      return model(id, isEmbedding ? 'embedding' : 'chat', contextWindow, maxOutputTokens, null);
+      // B: Gemini API does not return modalities; apply heuristics by family name.
+      const { inputModalities, outputModalities } = geminiModalitiesFromId(id);
+      return model(
+        id,
+        isEmbedding ? 'embedding' : 'chat',
+        contextWindow,
+        maxOutputTokens,
+        null,
+        isEmbedding ? undefined : inputModalities,
+        isEmbedding ? undefined : outputModalities,
+      );
     })
-    .filter((item) => item.contextWindow > 0);
+    .filter((m) => m.contextWindow > 0);
 
   return { models, notes: [] };
 }
 
-/**
- * Mistral exposes `max_context_length` and model capabilities. The list API
- * does not consistently expose a separate output cap, so `maxOutputTokens`
- * uses explicit output fields when present and otherwise falls back to the
- * context length, matching Mistral's documented request constraint.
- */
 async function fetchMistralModels(
   provider: AiProvider,
   apiKey: string,
@@ -334,7 +313,7 @@ async function fetchMistralModels(
   const models = arrayFromData(payload)
     .map((item) => {
       const id = stringField(item, 'id');
-      const usage = inferMistralUsage(item, id);
+      const { usage, inputModalities, outputModalities } = mistralCapabilitiesFromItem(item, id);
       const contextWindow = numberField(item, 'max_context_length') ?? 0;
       const maxOutputTokens =
         usage === 'embedding'
@@ -342,23 +321,16 @@ async function fetchMistralModels(
           : numberField(item, 'max_output_tokens') ??
             numberField(item, 'max_completion_tokens') ??
             contextWindow;
-      return model(id, usage, contextWindow, maxOutputTokens, null);
+      return model(id, usage, contextWindow, maxOutputTokens, null, inputModalities, outputModalities);
     })
-    .filter((item) => item.contextWindow > 0 || item.usage === 'embedding');
+    .filter((m) => m.contextWindow > 0 || m.usage === 'embedding');
 
   return {
     models,
-    notes: [
-      'Mistral does not always return a distinct output limit; the output reuses max_context_length when no more precise field exists.',
-    ],
+    notes: ['Mistral does not always return a distinct output limit; max_context_length is used as fallback.'],
   };
 }
 
-/**
- * OpenRouter exposes context and output limits with the most detailed shape of
- * all supported routers. `output_modalities=all` is used so embedding models
- * are not hidden by the default text-only filter.
- */
 async function fetchOpenRouterModels(
   provider: AiProvider,
   apiKey: string,
@@ -372,16 +344,13 @@ async function fetchOpenRouterModels(
     'openrouter',
   );
   const models = arrayFromData(payload)
-    .filter((item) => {
-      if (!freeOnly) return true;
-      const id = stringField(item, 'id');
-      return id.includes(':free');
-    })
+    .filter((item) => !freeOnly || stringField(item, 'id').includes(':free'))
     .map((item) => {
       const id = stringField(item, 'id');
       const topProvider = recordField(item, 'top_provider');
       const architecture = recordField(item, 'architecture');
-      const usage = inferOpenRouterUsage(item, architecture);
+      // B: OpenRouter provides explicit modalities in architecture.
+      const { usage, inputModalities, outputModalities } = openRouterCapabilitiesFromItem(item, architecture);
       const contextWindow =
         numberField(topProvider, 'context_length') ?? numberField(item, 'context_length') ?? 0;
       const maxOutputTokens =
@@ -390,18 +359,15 @@ async function fetchOpenRouterModels(
           : numberField(topProvider, 'max_completion_tokens') ??
             numberField(item, 'max_completion_tokens') ??
             contextWindow;
-      return model(id, usage, contextWindow, maxOutputTokens, null);
+      return model(id, usage, contextWindow, maxOutputTokens, null, inputModalities, outputModalities);
     });
 
-  return { models, notes: freeOnly ? ['Only models with ":free" in their name have been synchronized.'] : [] };
+  return {
+    models,
+    notes: freeOnly ? ['Only models with ":free" in their name have been synchronized.'] : [],
+  };
 }
 
-/**
- * OpenAI's List Models endpoint intentionally returns only basic metadata.
- * For chat and embedding models that can be recognized, this function applies
- * documented limits by family. Unrecognized asset/audio/image/moderation models
- * are omitted because the proxy currently needs only chat and embedding rows.
- */
 async function fetchOpenAiModels(
   provider: AiProvider,
   apiKey: string,
@@ -413,21 +379,14 @@ async function fetchOpenAiModels(
   );
   const models = arrayFromData(payload)
     .map((item) => openAiModelFromId(stringField(item, 'id')))
-    .filter((item): item is AiModel => item !== null);
+    .filter((m): m is AiModel => m !== null);
 
   return {
     models,
-    notes: [
-      'OpenAI /v1/models ne renvoie pas les limites; les modèles chat/embedding reconnus sont enrichis depuis les limites documentées.',
-    ],
+    notes: ['OpenAI /v1/models does not return limits; recognized chat/embedding models are enriched from documented limits.'],
   };
 }
 
-/**
- * Morph is OpenAI-compatible for model listing and currently publishes several
- * model-specific docs instead of a universal catalogue shape. We therefore
- * combine returned IDs with documented Morph model-family defaults.
- */
 async function fetchMorphModels(
   provider: AiProvider,
   apiKey: string,
@@ -439,23 +398,203 @@ async function fetchMorphModels(
   );
   const models = arrayFromData(payload)
     .map((item) => morphModelFromId(stringField(item, 'id'), item))
-    .filter((item): item is AiModel => item !== null);
+    .filter((m): m is AiModel => m !== null);
 
   return {
     models,
-    notes: [
-      'Morph est enrichi par famille de modèle quand /v1/models ne renvoie pas les limites.',
-    ],
+    notes: ['Morph is enriched by model family when /v1/models does not return limits.'],
   };
 }
 
-/** Normalizes a typical OpenAI-compatible model object. */
+// ---------------------------------------------------------------------------
+// Option C — Heuristic modality inference from model ID
+// ---------------------------------------------------------------------------
+
+interface ModalityResult {
+  inputModalities: AiModalityInput[];
+  outputModalities: AiModalityOutput[];
+  usage: AiModel['usage'];
+}
+
+/**
+ * Infers modalities and usage from the model ID alone.
+ * Applied as a fallback when the provider API does not return capability info.
+ */
+function inferModalitiesFromId(
+  id: string,
+  defaultUsage: AiModel['usage'] = 'chat',
+): ModalityResult {
+  const lower = id.toLowerCase();
+
+  // Transcription (audio-in, text-out)
+  if (/whisper|transcri/.test(lower)) {
+    return { inputModalities: ['audio'], outputModalities: ['text'], usage: 'transcription' };
+  }
+
+  // TTS (text-in, audio-out) — voxtral-*-tts, orpheus, tts-1, etc.
+  if (/voxtral[^/]*tts|orpheus|^tts[-_]/.test(lower)) {
+    return { inputModalities: ['text'], outputModalities: ['audio'], usage: 'tts' };
+  }
+
+  // Image generation (text-in, image-out)
+  if (/dall[-_]e|stable[-_]diffusion|flux|imagen|image[-_]gen/.test(lower)) {
+    return { inputModalities: ['text'], outputModalities: ['image'], usage: 'image-generation' };
+  }
+
+  // Voxtral audio chat (text+audio-in, text-out) — not TTS variants
+  if (/voxtral/.test(lower)) {
+    return { inputModalities: ['text', 'audio'], outputModalities: ['text'], usage: defaultUsage };
+  }
+
+  // OCR / document understanding (text+image-in, text-out)
+  if (/ocr/.test(lower)) {
+    return { inputModalities: ['text', 'image'], outputModalities: ['text'], usage: defaultUsage };
+  }
+
+  // Vision / multimodal models
+  if (/vision|pixtral|llava|llama-3\.2.*(11b|90b)|llama-4[-_](scout|maverick)|nemotron.*vl|gpt-4o|gpt-5/.test(lower)) {
+    return { inputModalities: ['text', 'image'], outputModalities: ['text'], usage: defaultUsage };
+  }
+
+  // Gemini multimodal families
+  if (/gemini[-_]?2\.|gemini[-_]?1\.5/.test(lower)) {
+    return { inputModalities: ['text', 'image', 'audio', 'video'], outputModalities: ['text'], usage: defaultUsage };
+  }
+
+  // Default — text only
+  return { inputModalities: ['text'], outputModalities: ['text'], usage: defaultUsage };
+}
+
+// ---------------------------------------------------------------------------
+// Option B helpers — provider-specific capability extraction
+// ---------------------------------------------------------------------------
+
+/** Maps Mistral capability fields to playground modalities and usage. */
+function mistralCapabilitiesFromItem(
+  item: JsonRecord,
+  id: string,
+): ModalityResult {
+  // C fallback: if Mistral did not return a capabilities object at all, use heuristics.
+  // But when the capabilities object IS present (even all-false), trust the API — don't
+  // let a vision-sounding name override an explicit API "vision: false".
+  const hasCapabilitiesObject = isRecord(item['capabilities']);
+  if (!hasCapabilitiesObject) {
+    return inferModalitiesFromId(id, 'chat');
+  }
+
+  const capabilities = recordField(item, 'capabilities');
+
+  // Embedding type check
+  if (
+    stringField(item, 'type').toLowerCase().includes('embedding') ||
+    id.toLowerCase().includes('embed') ||
+    capabilities.embedding === true
+  ) {
+    return { inputModalities: ['text'], outputModalities: ['text'], usage: 'embedding' };
+  }
+
+  // B: Use Mistral capability flags directly
+  const hasAudioTranscription =
+    capabilities.audio_transcription === true ||
+    capabilities.audio_transcription_realtime === true;
+  const hasAudioSpeech = capabilities.audio_speech === true;
+  const hasAudio = capabilities.audio === true;
+  const hasVision = capabilities.vision === true || capabilities.ocr === true;
+
+  if (hasAudioTranscription) {
+    return { inputModalities: ['audio'], outputModalities: ['text'], usage: 'transcription' };
+  }
+  if (hasAudioSpeech && !hasAudio) {
+    return { inputModalities: ['text'], outputModalities: ['audio'], usage: 'tts' };
+  }
+
+  const inputModalities: AiModalityInput[] = ['text'];
+  if (hasVision) inputModalities.push('image');
+  if (hasAudio || hasAudioSpeech) inputModalities.push('audio');
+
+  const outputModalities: AiModalityOutput[] = ['text'];
+  if (hasAudioSpeech) outputModalities.push('audio');
+
+  return { inputModalities, outputModalities, usage: 'chat' };
+}
+
+/** Maps OpenRouter architecture fields to playground modalities and usage. */
+function openRouterCapabilitiesFromItem(
+  item: JsonRecord,
+  architecture: JsonRecord,
+): ModalityResult {
+  const outputMods = stringArrayField(architecture, 'output_modalities');
+  const inputMods = stringArrayField(architecture, 'input_modalities');
+  const modality = stringField(architecture, 'modality').toLowerCase();
+  const id = stringField(item, 'id');
+
+  // Embedding detection
+  if (
+    outputMods.some((m) => m.toLowerCase().includes('embedding')) ||
+    modality.includes('embedding') ||
+    id.toLowerCase().includes('embed')
+  ) {
+    return { inputModalities: ['text'], outputModalities: ['text'], usage: 'embedding' };
+  }
+
+  // B: Direct mapping from OpenRouter architecture fields
+  if (inputMods.length > 0 || outputMods.length > 0) {
+    const inputModalities = mapOpenRouterModalities<AiModalityInput>(
+      inputMods,
+      ['text', 'image', 'audio', 'video'],
+    );
+    const outputModalities = mapOpenRouterModalities<AiModalityOutput>(
+      outputMods,
+      ['text', 'image', 'audio'],
+    );
+
+    const hasOnlyAudioOut = outputModalities.length === 1 && outputModalities[0] === 'audio';
+    const usage: AiModel['usage'] = hasOnlyAudioOut ? 'tts' : 'chat';
+
+    return {
+      inputModalities: inputModalities.length > 0 ? inputModalities : ['text'],
+      outputModalities: outputModalities.length > 0 ? outputModalities : ['text'],
+      usage,
+    };
+  }
+
+  // C fallback
+  return inferModalitiesFromId(id, 'chat');
+}
+
+function mapOpenRouterModalities<T extends string>(
+  raw: string[],
+  allowed: T[],
+): T[] {
+  const result: T[] = [];
+  for (const entry of raw) {
+    const normalized = entry.toLowerCase() as T;
+    if (allowed.includes(normalized)) result.push(normalized);
+  }
+  return result;
+}
+
+/** Applies Gemini-family heuristics — the Gemini API does not expose modalities. */
+function geminiModalitiesFromId(id: string): { inputModalities: AiModalityInput[]; outputModalities: AiModalityOutput[] } {
+  const lower = id.toLowerCase();
+  // Gemini 2.x and 1.5 are multimodal
+  if (/gemini[-_]?2\.|gemini[-_]?1\.5/.test(lower)) {
+    return { inputModalities: ['text', 'image', 'audio', 'video'], outputModalities: ['text'] };
+  }
+  // Gemini 1.0 Pro — text only
+  return { inputModalities: ['text'], outputModalities: ['text'] };
+}
+
+// ---------------------------------------------------------------------------
+// Shared helpers
+// ---------------------------------------------------------------------------
+
 function normalizeFromOpenAiCompatible(
   item: JsonRecord,
   defaultUsage: 'chat' | 'embedding',
 ): AiModel {
   const id = stringField(item, 'id');
-  const usage = inferUsageFromId(id) ?? defaultUsage;
+  const { usage, inputModalities, outputModalities } = inferModalitiesFromId(id, defaultUsage);
   const contextWindow =
     numberField(item, 'context_window') ??
     numberField(item, 'context_length') ??
@@ -467,16 +606,17 @@ function normalizeFromOpenAiCompatible(
       : numberField(item, 'max_completion_tokens') ??
         numberField(item, 'max_output_tokens') ??
         contextWindow;
-  return model(id, usage, contextWindow, maxOutputTokens, null);
+  return model(id, usage, contextWindow, maxOutputTokens, null, inputModalities, outputModalities);
 }
 
-/** Creates a normalized model with safe integer limits. */
 function model(
   id: string,
-  usage: 'chat' | 'embedding',
+  usage: AiModel['usage'],
   contextWindow: number,
   maxOutputTokens: number,
   tpmLimit: number | null,
+  inputModalities?: AiModalityInput[],
+  outputModalities?: AiModalityOutput[],
 ): AiModel {
   return {
     id,
@@ -485,6 +625,8 @@ function model(
     maxOutputTokens: Math.max(0, Math.trunc(maxOutputTokens)),
     tpmLimit,
     priority: 0,
+    ...(inputModalities ? { inputModalities } : {}),
+    ...(outputModalities ? { outputModalities } : {}),
   };
 }
 
@@ -495,7 +637,9 @@ function arrayFromData(payload: unknown): JsonRecord[] {
 }
 
 function arrayFromField(payload: unknown, field: string): JsonRecord[] {
-  if (isRecord(payload) && Array.isArray(payload[field])) return payload[field].filter(isRecord);
+  if (isRecord(payload) && Array.isArray(payload[field])) {
+    return (payload[field] as unknown[]).filter(isRecord);
+  }
   return [];
 }
 
@@ -509,110 +653,67 @@ function recordField(value: JsonRecord, field: string): JsonRecord {
 }
 
 function stringField(value: JsonRecord, field: string): string {
-  const fieldValue = value[field];
-  return typeof fieldValue === 'string' ? fieldValue : '';
+  const v = value[field];
+  return typeof v === 'string' ? v : '';
 }
 
 function numberField(value: JsonRecord, field: string): number | null {
-  const fieldValue = value[field];
-  if (typeof fieldValue === 'number' && Number.isFinite(fieldValue)) return fieldValue;
-  if (typeof fieldValue === 'string' && fieldValue.trim() !== '') {
-    const parsed = Number(fieldValue);
+  const v = value[field];
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  if (typeof v === 'string' && v.trim() !== '') {
+    const parsed = Number(v);
     if (Number.isFinite(parsed)) return parsed;
   }
   return null;
 }
 
 function stringArrayField(value: JsonRecord, field: string): string[] {
-  const fieldValue = value[field];
-  return Array.isArray(fieldValue)
-    ? fieldValue.filter((item): item is string => typeof item === 'string')
-    : [];
+  const v = value[field];
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
 }
 
-function inferUsageFromId(id: string): 'chat' | 'embedding' | null {
+/**
+ * Returns the usage type inferred from a model ID.
+ * Non-chat/embedding models now return their specialized usage type instead of null.
+ */
+function inferUsageFromId(id: string): AiModel['usage'] | null {
   const lower = id.toLowerCase();
   if (lower.includes('embedding') || lower.includes('embed')) return 'embedding';
-  if (
-    lower.includes('moderation') ||
-    lower.includes('rerank') ||
-    lower.includes('whisper') ||
-    lower.includes('tts') ||
-    lower.includes('image') ||
-    lower.includes('dall-e') ||
-    lower.includes('sora') ||
-    lower.includes('transcribe')
-  ) {
-    return null;
-  }
-  return 'chat';
-}
-
-function inferMistralUsage(item: JsonRecord, id: string): 'chat' | 'embedding' {
-  const capabilities = recordField(item, 'capabilities');
-  if (
-    stringField(item, 'type').toLowerCase().includes('embedding') ||
-    id.toLowerCase().includes('embed') ||
-    capabilities.embedding === true
-  ) {
-    return 'embedding';
-  }
-  return 'chat';
-}
-
-function inferOpenRouterUsage(
-  item: JsonRecord,
-  architecture: JsonRecord,
-): 'chat' | 'embedding' {
-  const outputModalities = stringArrayField(architecture, 'output_modalities');
-  const modality = stringField(architecture, 'modality').toLowerCase();
-  if (
-    outputModalities.some((entry) => entry.toLowerCase().includes('embedding')) ||
-    modality.includes('embedding') ||
-    stringField(item, 'id').toLowerCase().includes('embed')
-  ) {
-    return 'embedding';
-  }
+  if (/whisper|transcri/.test(lower)) return 'transcription';
+  if (/voxtral[^/]*tts|orpheus|^tts[-_]/.test(lower)) return 'tts';
+  if (/dall[-_]e|stable[-_]diffusion|flux\b|image[-_]gen/.test(lower)) return 'image-generation';
+  if (/moderation|rerank|sora/.test(lower)) return null; // still filtered
   return 'chat';
 }
 
 function anthropicLimits(id: string): { contextWindow: number; maxOutputTokens: number } {
-  if (id.includes('claude-3-7-sonnet')) {
-    return { contextWindow: 200_000, maxOutputTokens: 64_000 };
-  }
-  if (id.includes('claude-sonnet-4')) {
-    return { contextWindow: 200_000, maxOutputTokens: 64_000 };
-  }
-  if (id.includes('claude-opus-4')) {
-    return { contextWindow: 200_000, maxOutputTokens: 32_000 };
-  }
-  if (id.includes('claude-3-5-haiku')) {
-    return { contextWindow: 200_000, maxOutputTokens: 8_192 };
-  }
-  if (id.includes('claude-3-haiku')) {
-    return { contextWindow: 200_000, maxOutputTokens: 4_096 };
-  }
+  if (id.includes('claude-3-7-sonnet')) return { contextWindow: 200_000, maxOutputTokens: 64_000 };
+  if (id.includes('claude-sonnet-4')) return { contextWindow: 200_000, maxOutputTokens: 64_000 };
+  if (id.includes('claude-opus-4')) return { contextWindow: 200_000, maxOutputTokens: 32_000 };
+  if (id.includes('claude-3-5-haiku')) return { contextWindow: 200_000, maxOutputTokens: 8_192 };
+  if (id.includes('claude-3-haiku')) return { contextWindow: 200_000, maxOutputTokens: 4_096 };
+  if (id.includes('claude-haiku-4')) return { contextWindow: 200_000, maxOutputTokens: 64_000 };
   return { contextWindow: 200_000, maxOutputTokens: 8_192 };
 }
 
 function openAiModelFromId(id: string): AiModel | null {
   const usage = inferUsageFromId(id);
   if (!usage) return null;
-  if (usage === 'embedding') return model(id, 'embedding', 8_192, 0, null);
-  if (id.startsWith('gpt-5.2') || id.startsWith('gpt-5.1-codex')) {
-    return model(id, 'chat', 400_000, 128_000, null);
-  }
-  if (id.startsWith('gpt-5')) return model(id, 'chat', 400_000, 128_000, null);
-  if (id.startsWith('gpt-4.1')) return model(id, 'chat', 1_047_576, 32_768, null);
-  if (id.startsWith('gpt-4o')) return model(id, 'chat', 128_000, 16_384, null);
-  if (id.startsWith('gpt-4-turbo')) return model(id, 'chat', 128_000, 4_096, null);
-  if (id.startsWith('gpt-4')) return model(id, 'chat', 8_192, 8_192, null);
-  if (id.startsWith('gpt-3.5-turbo-16k')) return model(id, 'chat', 16_385, 4_096, null);
-  if (id.startsWith('gpt-3.5-turbo')) return model(id, 'chat', 16_385, 4_096, null);
-  if (id.startsWith('o3') || id.startsWith('o4') || id.startsWith('o1')) {
-    return model(id, 'chat', 200_000, 100_000, null);
-  }
-  if (id.startsWith('gpt-oss')) return model(id, 'chat', 131_072, 131_072, null);
+  const { inputModalities, outputModalities } = inferModalitiesFromId(id, usage === 'chat' ? 'chat' : usage);
+  if (usage === 'embedding') return model(id, 'embedding', 8_192, 0, null, ['text'], ['text']);
+  if (usage === 'transcription') return model(id, 'transcription', 0, 0, null, inputModalities, outputModalities);
+  if (usage === 'tts') return model(id, 'tts', 0, 0, null, inputModalities, outputModalities);
+  if (usage === 'image-generation') return model(id, 'image-generation', 0, 0, null, inputModalities, outputModalities);
+  if (id.startsWith('gpt-5.2') || id.startsWith('gpt-5.1-codex')) return model(id, 'chat', 400_000, 128_000, null, inputModalities, outputModalities);
+  if (id.startsWith('gpt-5')) return model(id, 'chat', 400_000, 128_000, null, inputModalities, outputModalities);
+  if (id.startsWith('gpt-4.1')) return model(id, 'chat', 1_047_576, 32_768, null, inputModalities, outputModalities);
+  if (id.startsWith('gpt-4o')) return model(id, 'chat', 128_000, 16_384, null, ['text', 'image'], ['text']);
+  if (id.startsWith('gpt-4-turbo')) return model(id, 'chat', 128_000, 4_096, null, ['text', 'image'], ['text']);
+  if (id.startsWith('gpt-4')) return model(id, 'chat', 8_192, 8_192, null, ['text'], ['text']);
+  if (id.startsWith('gpt-3.5-turbo-16k')) return model(id, 'chat', 16_385, 4_096, null, ['text'], ['text']);
+  if (id.startsWith('gpt-3.5-turbo')) return model(id, 'chat', 16_385, 4_096, null, ['text'], ['text']);
+  if (id.startsWith('o3') || id.startsWith('o4') || id.startsWith('o1')) return model(id, 'chat', 200_000, 100_000, null, ['text'], ['text']);
+  if (id.startsWith('gpt-oss')) return model(id, 'chat', 131_072, 131_072, null, ['text'], ['text']);
   return null;
 }
 
@@ -625,11 +726,8 @@ function morphModelFromId(id: string, item: JsonRecord): AiModel | null {
     numberField(item, 'max_context_length');
   const maxOutputTokens =
     numberField(item, 'max_completion_tokens') ?? numberField(item, 'max_output_tokens');
-  if (usage === 'embedding') {
-    return model(id, 'embedding', contextWindow ?? 8_192, 0, null);
-  }
-  if (id.includes('dsv4flash')) return model(id, 'chat', contextWindow ?? 393_000, maxOutputTokens ?? 12_000, null);
-  if (id.startsWith('morph-v3')) return model(id, 'chat', contextWindow ?? 50_000, maxOutputTokens ?? 12_000, null);
-  return model(id, 'chat', contextWindow ?? 50_000, maxOutputTokens ?? 12_000, null);
+  if (usage === 'embedding') return model(id, 'embedding', contextWindow ?? 8_192, 0, null, ['text'], ['text']);
+  if (id.includes('dsv4flash')) return model(id, 'chat', contextWindow ?? 393_000, maxOutputTokens ?? 12_000, null, ['text'], ['text']);
+  if (id.startsWith('morph-v3')) return model(id, 'chat', contextWindow ?? 50_000, maxOutputTokens ?? 12_000, null, ['text'], ['text']);
+  return model(id, 'chat', contextWindow ?? 50_000, maxOutputTokens ?? 12_000, null, ['text'], ['text']);
 }
-
