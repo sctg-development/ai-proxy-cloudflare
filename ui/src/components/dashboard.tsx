@@ -325,6 +325,62 @@ export const Dashboard: React.FC = () => {
   };
 
   /**
+   * Refreshes only the latest models (ending with "-latest") for Mistral.
+   * Uses the same flow as refreshProviderModels but filters for "-latest" suffix.
+   */
+  const refreshProviderLatestModels = async (id: string) => {
+    if (!activeConfig) return;
+
+    const provider = activeConfig.providers[id];
+    const usableKey = provider.keys.find((apiKey) => apiKey.type !== 'expired');
+    if (!usableKey) {
+      setModelSyncMessages((messages) => ({
+        ...messages,
+        [id]: 'No non-expired key available to query this provider.',
+      }));
+      return;
+    }
+
+    setSyncingProviderId(id);
+    setModelSyncMessages((messages) => ({
+      ...messages,
+      [id]: `Querying latest models with key ${maskApiKey(usableKey.key)}…`,
+    }));
+
+    try {
+      const result = await discoverProviderModels(id, provider, usableKey.key, provider.models);
+      // Filter models to keep only those ending with "-latest"
+      const latestModels = result.models.filter(model => model.id.endsWith('-latest'));
+
+      if (latestModels.length === 0) {
+        setModelSyncMessages((messages) => ({
+          ...messages,
+          [id]: 'No models ending with "-latest" found in the API response.',
+        }));
+        return;
+      }
+
+      const newConfig: AiConfig = JSON.parse(JSON.stringify(activeConfig));
+      newConfig.providers[id].models = latestModels;
+      stageConfig(newConfig);
+      setModelSyncMessages((messages) => ({
+        ...messages,
+        [id]: [
+          `${latestModels.length} latest model(s) synchronized.`,
+          ...result.notes,
+        ].join(' '),
+      }));
+    } catch (err) {
+      setModelSyncMessages((messages) => ({
+        ...messages,
+        [id]: err instanceof Error ? err.message : 'Unable to synchronize latest models.',
+      }));
+    } finally {
+      setSyncingProviderId(null);
+    }
+  };
+
+  /**
    * Saves a reordered model array and regenerates priorities from the visible
    * order. Priority `0` is the first model in the list.
    */
@@ -524,6 +580,7 @@ export const Dashboard: React.FC = () => {
                     onDeleteSelectedModels={(modelIds) => deleteProviderModels(id, modelIds)}
                     onRefreshModels={() => refreshProviderModels(id)}
                     onRefreshFreeModels={() => refreshProviderFreeModels(id)}
+                    onRefreshLatestModels={() => refreshProviderLatestModels(id)}
                     canRefreshModels={canDiscoverProviderModels(id, provider)}
                     isRefreshingModels={syncingProviderId === id}
                     modelSyncMessage={modelSyncMessages[id]}
@@ -578,6 +635,8 @@ interface ProviderCardProps {
   onRefreshModels: () => void;
   /** Called when the user asks to reload only free models (OpenRouter only). */
   onRefreshFreeModels?: () => void;
+  /** Called when the user asks to reload only latest models (Mistral only). */
+  onRefreshLatestModels?: () => void;
   /** Whether this provider has a known upstream model-list API implementation. */
   canRefreshModels: boolean;
   /** Whether the upstream model-list request is in flight. */
@@ -615,6 +674,7 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
   onDeleteSelectedModels,
   onRefreshModels,
   onRefreshFreeModels,
+  onRefreshLatestModels,
   canRefreshModels,
   isRefreshingModels,
   modelSyncMessage,
@@ -696,6 +756,18 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
                 >
                   <DownloadCloud className="mr-2 h-3.5 w-3.5" />
                   Refresh free from API
+                </Button>
+              )}
+              {id === 'mistral' && onRefreshLatestModels && (
+                <Button
+                  size="sm"
+                  variant="tertiary"
+                  onPress={onRefreshLatestModels}
+                  isPending={isRefreshingModels}
+                  isDisabled={!canRefreshModels || provider.keys.every((apiKey) => apiKey.type === 'expired')}
+                >
+                  <DownloadCloud className="mr-2 h-3.5 w-3.5" />
+                  Refresh latest from API
                 </Button>
               )}
               <Button size="sm" variant="tertiary" onPress={onAddModel}>
