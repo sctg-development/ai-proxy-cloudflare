@@ -32,6 +32,7 @@ import {
 } from '@heroui/react';
 import { useAi } from '../hooks/use-ai';
 import {
+  Download,
   FlaskConical,
   LogOut,
   Plus,
@@ -470,6 +471,22 @@ export const Dashboard: React.FC = () => {
             >
               <FlaskConical className="mr-2 h-4 w-4" />
               Playground
+            </Button>
+            <Button variant="ghost" size="sm" onPress={() => {
+              const timestamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+/, '');
+              const filename = `ai.${timestamp}.json`;
+              const jsonData = JSON.stringify(activeConfig, null, 2);
+              const blob = new Blob([jsonData], { type: 'application/json' });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = filename;
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+              URL.revokeObjectURL(url);
+            }}>
+              <Download className="h-4 w-4" />
             </Button>
             <Button variant="danger-soft" size="sm" onPress={logout}>
               <LogOut className="mr-2 h-4 w-4" />
