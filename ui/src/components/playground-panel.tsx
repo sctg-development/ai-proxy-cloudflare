@@ -41,28 +41,21 @@ import {
   Send,
   X,
 } from 'lucide-react';
-import { Marked } from 'marked';
-import { markedHighlight } from 'marked-highlight';
-import highlightJs from 'highlight.js';
 import type { AiConfig, AiProvider } from '../types/ai-config';
+import type { PlaygroundFile, PlaygroundMessage } from '../types/playground-types';
 import { maskApiKey } from '../lib/provider-models';
-
-interface PlaygroundFile {
-  id: string;
-  name: string;
-  type: string;
-  size: number;
-  content: string;
-}
-
-/**
- * Represents a single message in the chat conversation.
- */
-interface PlaygroundMessage {
-  role: 'user' | 'assistant';
-  content: string;
-  files?: PlaygroundFile[];
-}
+import {
+  formatBytes,
+  buildUserContent,
+  messageTokenText,
+  getMarkdownFilename,
+  extractGeneratedFiles,
+  MAX_CONTEXT_FILE_BYTES
+} from '../lib/utils/file-utils';
+import {
+  createMarkedRenderer,
+  sanitizeRenderedHtml
+} from '../lib/utils/markdown-utils';
 
 /**
  * Props for the PlaygroundPanel component.
@@ -77,146 +70,6 @@ export interface PlaygroundPanelProps {
  * should cycle through all available keys for a provider.
  */
 const AUTO_ROUND_ROBIN_KEY = '__auto_round_robin__';
-const MAX_CONTEXT_FILE_BYTES = 256 * 1024;
-
-const createMarkedRenderer = () => new Marked(
-  markedHighlight({
-    emptyLangClass: 'hljs',
-    langPrefix: 'hljs language-',
-    highlight(code, lang) {
-      const language = highlightJs.getLanguage(lang) ? lang : 'plaintext';
-      return highlightJs.highlight(code, { language }).value;
-    },
-  }),
-);
-
-const sanitizeRenderedHtml = (html: string): string => {
-  if (typeof window === 'undefined') return html;
-
-  const document = new DOMParser().parseFromString(html, 'text/html');
-  document.querySelectorAll('script, style, iframe, object, embed, link').forEach((element) => element.remove());
-  document.body.querySelectorAll('*').forEach((element) => {
-    for (const attribute of Array.from(element.attributes)) {
-      const name = attribute.name.toLowerCase();
-      const value = attribute.value.trim().toLowerCase();
-      if (name.startsWith('on') || value.startsWith('javascript:') || value.startsWith('data:') || value.startsWith('vbscript:')) {
-        element.removeAttribute(attribute.name);
-      }
-    }
-  });
-
-  return document.body.innerHTML;
-};
-
-const formatBytes = (bytes: number): string => {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-};
-
-const buildUserContent = (prompt: string, files: PlaygroundFile[] = []): string => {
-  if (files.length === 0) return prompt;
-
-  const fileContext = files
-    .map((file) => [
-      `<file name="${file.name}" type="${file.type || 'text/plain'}" size="${file.size}">`,
-      file.content,
-      '</file>',
-    ].join('\n'))
-    .join('\n\n');
-
-  return [
-    prompt,
-    '',
-    'Attached context files:',
-    fileContext,
-  ].join('\n');
-};
-
-const messageTokenText = (message: PlaygroundMessage): string => buildUserContent(message.content, message.files);
-
-const getMarkdownFilename = (content: string, index: number): string => {
-  const heading = content.match(/^#\s+(.+)$/m)?.[1]
-    ?.trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-  return `${heading || `assistant-response-${index + 1}`}.md`;
-};
-
-const getFileExtension = (language: string): string => ({
-  bash: 'sh',
-  c: 'c',
-  cpp: 'cpp',
-  css: 'css',
-  html: 'html',
-  javascript: 'js',
-  js: 'js',
-  json: 'json',
-  markdown: 'md',
-  md: 'md',
-  python: 'py',
-  sh: 'sh',
-  shell: 'sh',
-  ts: 'ts',
-  tsx: 'tsx',
-  typescript: 'ts',
-  xml: 'xml',
-  yaml: 'yaml',
-  yml: 'yml',
-}[language.toLowerCase()] ?? 'txt');
-
-const makeUniqueFilename = (filename: string, usedNames: Set<string>): string => {
-  if (!usedNames.has(filename)) {
-    usedNames.add(filename);
-    return filename;
-  }
-
-  const dotIndex = filename.lastIndexOf('.');
-  const basename = dotIndex > 0 ? filename.slice(0, dotIndex) : filename;
-  const extension = dotIndex > 0 ? filename.slice(dotIndex) : '';
-  let suffix = 2;
-  let candidate = `${basename}-${suffix}${extension}`;
-
-  while (usedNames.has(candidate)) {
-    suffix += 1;
-    candidate = `${basename}-${suffix}${extension}`;
-  }
-
-  usedNames.add(candidate);
-  return candidate;
-};
-
-const extractGeneratedFiles = (content: string) => {
-  const files: Array<{ name: string; content: string }> = [];
-  const usedNames = new Set<string>();
-  const fencePattern = /```([^\n`]*)\n([\s\S]*?)```/g;
-  let match: RegExpExecArray | null;
-  let index = 0;
-
-  while ((match = fencePattern.exec(content)) !== null) {
-    const info = match[1]?.trim() ?? '';
-    const code = match[2] ?? '';
-    const filename = info.match(/(?:file(?:name)?|path|title)=["']?([^"'\s]+)["']?/i)?.[1];
-    const language = info.split(/\s+/)[0] || 'txt';
-
-    if (filename) {
-      files.push({
-        name: makeUniqueFilename(filename, usedNames),
-        content: code.replace(/\n$/, ''),
-      });
-    } else {
-      files.push({
-        name: makeUniqueFilename(`generated-${index + 1}.${getFileExtension(language)}`, usedNames),
-        content: code.replace(/\n$/, ''),
-      });
-    }
-
-    index += 1;
-  }
-
-  return files;
-};
 
 export const PlaygroundPanel: React.FC<PlaygroundPanelProps> = ({ config }) => {
   // --- State: Selection & Configuration ---
