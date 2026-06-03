@@ -41,7 +41,8 @@ export type SupportedDiscoveryProvider =
   | 'mistral'
   | 'openrouter'
   | 'openai'
-  | 'morph';
+  | 'morph'
+  | 'cohere';
 
 /** Result returned to the UI after a provider catalogue has been normalized. */
 export interface ProviderModelDiscoveryResult {
@@ -79,6 +80,8 @@ export async function discoverProviderModels(
       return withStablePriority(await fetchOpenAiModels(provider, apiKey), previousModels);
     case 'morph':
       return withStablePriority(await fetchMorphModels(provider, apiKey), previousModels);
+    case 'cohere':
+      return withStablePriority(await fetchCohereModels(provider, apiKey), previousModels);
     case 'groq':
     case 'sambanova':
       return withStablePriority(
@@ -131,12 +134,13 @@ function canonicalProviderId(
   if (haystack.includes('sambanova') || haystack.includes('samba')) return 'sambanova';
   if (haystack.includes('groq')) return 'groq';
   if (haystack.includes('morphllm') || /\bmorph\b/.test(haystack)) return 'morph';
+  if (haystack.includes('cohere')) return 'cohere';
   return 'openai';
 }
 
 function isSupportedDiscoveryProvider(providerId: string): providerId is SupportedDiscoveryProvider {
   return [
-    'groq', 'sambanova', 'anthropic', 'gemini', 'mistral', 'openrouter', 'openai', 'morph',
+    'groq', 'sambanova', 'anthropic', 'gemini', 'mistral', 'openrouter', 'openai', 'morph', 'cohere',
   ].includes(providerId);
 }
 
@@ -404,6 +408,54 @@ async function fetchMorphModels(
     models,
     notes: ['Morph is enriched by model family when /v1/models does not return limits.'],
   };
+}
+
+async function fetchCohereModels(
+  provider: AiProvider,
+  apiKey: string,
+): Promise<ProviderModelDiscoveryResult> {
+  const payload = await fetchJson(
+    modelsUrl(provider, 'https://api.cohere.ai/v1'),
+    { headers: { Authorization: `Bearer ${apiKey}` } },
+    'cohere',
+  );
+
+  const models = arrayFromField(payload, 'models')
+    .map((item) => {
+      const id = stringField(item, 'name');
+      const endpoints = stringArrayField(item, 'endpoints');
+      const features = stringArrayField(item, 'features');
+      const contextLength = numberField(item, 'context_length') ?? 0;
+
+      // Determine usage based on endpoints
+      let usage: AiModel['usage'] = 'chat';
+      if (endpoints.includes('embed') || id.toLowerCase().includes('embed')) {
+        usage = 'embedding';
+      } else if (endpoints.includes('transcriptions')) {
+        usage = 'transcription';
+      }
+
+      // Determine input/output modalities based on features
+      const inputModalities: AiModalityInput[] = ['text'];
+      const outputModalities: AiModalityOutput[] = ['text'];
+
+      if (features.includes('vision')) {
+        inputModalities.push('image');
+      }
+
+      return model(
+        id,
+        usage,
+        contextLength,
+        contextLength, // Cohere does not provide a separate maxOutputTokens, so use contextLength as a fallback
+        null,
+        inputModalities,
+        outputModalities,
+      );
+    })
+    .filter((m) => m.contextWindow > 0 || m.usage === 'embedding');
+
+  return { models, notes: [] };
 }
 
 // ---------------------------------------------------------------------------

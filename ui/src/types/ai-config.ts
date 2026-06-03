@@ -31,7 +31,8 @@ export type AiProtocol =
   | 'gemini'
   | 'mistral'
   | 'openrouter'
-  | 'morph';
+  | 'morph'
+  | 'cohere';
 
 /** Supported input modalities for a model. */
 export type AiModalityInput = 'text' | 'image' | 'audio' | 'video';
