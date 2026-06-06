@@ -34,6 +34,11 @@ export type AiProtocol =
   | 'morph'
   | 'cohere';
 
+/**
+ * Supported crawler protocols.
+ */
+export type CrawlerProtocol = 'firecrawl' | 'scrapegraphai';
+
 /** Supported input modalities for a model. */
 export type AiModalityInput = 'text' | 'image' | 'audio' | 'video';
 
@@ -112,6 +117,18 @@ export interface AiProvider {
 }
 
 /**
+ * Represents a crawler service configuration.
+ */
+export interface Crawler {
+  /** Protocol used by the crawler */
+  protocol: CrawlerProtocol;
+  /** Base API endpoint */
+  endpoint: string;
+  /** List of API keys for this crawler */
+  keys: AiKey[];
+}
+
+/**
  * The root AI configuration object (the "vault").
  */
 export interface AiConfig {
@@ -119,5 +136,7 @@ export interface AiConfig {
   version: number;
   /** Dictionary of providers keyed by their unique ID */
   providers: Record<string, AiProvider>;
+  /** Dictionary of crawlers keyed by their unique ID */
+  crawlers: Record<string, Crawler>;
 }
 

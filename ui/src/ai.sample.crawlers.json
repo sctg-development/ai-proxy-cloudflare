@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "providers": {
+    "openai-primary": {
+      "protocol": "openai",
+      "endpoint": "https://api.openai.com/v1",
+      "keys": [
+        {
+          "key": "sk-1234567890abcdef1234567890abcdef12345678",
+          "owner": "team-backend",
+          "type": "paid"
+        }
+      ],
+      "models": [
+        {
+          "id": "gpt-4o",
+          "usage": "chat",
+          "contextWindow": 128000,
+          "maxOutputTokens": 4096,
+          "priority": 0,
+          "tpmLimit": null,
+          "inputModalities": ["text"],
+          "outputModalities": ["text"]
+        }
+      ]
+    }
+  },
+  "crawlers": {
+    "firecrawl-primary": {
+      "protocol": "firecrawl",
+      "endpoint": "https://api.firecrawl.dev/v0",
+      "keys": [
+        {
+          "key": "fc-1234567890abcdef1234567890abcdef12345678",
+          "owner": "team-scraping",
+          "type": "paid"
+        }
+      ]
+    },
+    "scrapegraphai-primary": {
+      "protocol": "scrapegraphai",
+      "endpoint": "https://api.scrapegraphai.com/v1",
+      "keys": [
+        {
+          "key": "sg-1234567890abcdef1234567890abcdef12345678",
+          "owner": "team-scraping",
+          "type": "paid"
+        }
+      ]
+    }
+  }
+}

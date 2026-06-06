@@ -27,18 +27,20 @@ import {
   useOverlayState,
 } from '@heroui/react';
 import { Save, X } from 'lucide-react';
-import type { AiConfig, AiProtocol, AiProvider, AiModel, AiKey } from '../../types/ai-config';
+import type { AiConfig, AiProtocol, AiProvider, AiModel, AiKey, Crawler, CrawlerProtocol } from '../../types/ai-config';
 
 /**
  * Identifies the entity being added or edited inside the modal.
  * `itemId` is optional:
  *   - provider: not used (providerId is the identifier)
+ *   - crawler: not used (crawlerId is the identifier)
  *   - model: the model.id string
  *   - key: the numeric index in the keys array (as a string)
  */
 interface EditTarget {
-  type: 'provider' | 'model' | 'key';
-  providerId: string;
+  type: 'provider' | 'model' | 'key' | 'crawler';
+  providerId?: string;
+  crawlerId?: string;
   /** Model id or key array index (stringified) when editing an existing item. */
   itemId?: string;
 }
@@ -82,9 +84,16 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({
    */
   const getInitialValue = (fieldName: string): string => {
     if (!editTarget) return '';
-    const provider = config.providers[editTarget.providerId];
 
-    if (type === 'provider') {
+    if (type === 'crawler' && editTarget.crawlerId) {
+      const crawler = config.crawlers[editTarget.crawlerId];
+      if (fieldName === 'id') return editTarget.crawlerId;
+      // Cast via unknown to safely index by string key — values come from known crawler fields.
+      return String(((crawler as unknown) as Record<string, unknown>)[fieldName] ?? '');
+    }
+
+    if (type === 'provider' && editTarget.providerId) {
+      const provider = config.providers[editTarget.providerId];
       if (fieldName === 'id') return editTarget.providerId;
       if (fieldName === 'modelCardEndpoint') {
         const providerWithLegacy = provider as AiProvider & { model_card_endpoint?: string };
@@ -93,15 +102,23 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({
       // Cast via unknown to safely index by string key — values come from known provider fields.
       return String(((provider as unknown) as Record<string, unknown>)[fieldName] ?? '');
     }
-    if (type === 'model' && editTarget.itemId) {
+    if (type === 'model' && editTarget.itemId && editTarget.providerId) {
+      const provider = config.providers[editTarget.providerId];
       const model = provider.models.find((m) => m.id === editTarget.itemId);
       const val = (((model as unknown) as Record<string, unknown> | undefined))?.[fieldName];
       if (Array.isArray(val)) return JSON.stringify(val);
       return String(val ?? '');
     }
     if (type === 'key' && editTarget.itemId !== undefined) {
-      const apiKey = provider.keys[Number(editTarget.itemId)];
-      return String((((apiKey as unknown) as Record<string, unknown> | undefined))?.[fieldName] ?? '');
+      if (editTarget.providerId) {
+        const provider = config.providers[editTarget.providerId];
+        const apiKey = provider.keys[Number(editTarget.itemId)];
+        return String((((apiKey as unknown) as Record<string, unknown> | undefined))?.[fieldName] ?? '');
+      } else if (editTarget.crawlerId) {
+        const crawler = config.crawlers[editTarget.crawlerId];
+        const apiKey = crawler.keys[Number(editTarget.itemId)];
+        return String((((apiKey as unknown) as Record<string, unknown> | undefined))?.[fieldName] ?? '');
+      }
     }
     return '';
   };
@@ -118,6 +135,11 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({
     // Deep clone to avoid mutating the state object that React holds.
     const newConfig: AiConfig = JSON.parse(JSON.stringify(config));
 
+    // Initialize crawlers if it doesn't exist
+    if (!newConfig.crawlers) {
+      newConfig.crawlers = {};
+    }
+
     if (type === 'provider') {
       const providerId = data.id;
       const providerBody: AiProvider = {
@@ -127,18 +149,32 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({
         gatewayModelPrefix: data.gatewayModelPrefix || undefined,
         modelCardEndpoint: data.modelCardEndpoint || undefined,
         // Preserve existing keys/models when renaming or editing a provider.
-        keys: editTarget ? newConfig.providers[editTarget.providerId].keys : [],
+        keys: editTarget ? newConfig.providers[editTarget.providerId!].keys : [],
         models: editTarget
-          ? newConfig.providers[editTarget.providerId].models
+          ? newConfig.providers[editTarget.providerId!].models
           : [],
       };
 
       // If the provider was renamed (id changed), remove the old entry first.
-      if (editTarget && editTarget.providerId !== providerId) {
+      if (editTarget && editTarget.providerId && editTarget.providerId !== providerId) {
         delete newConfig.providers[editTarget.providerId];
       }
       newConfig.providers[providerId] = providerBody;
-    } else if (type === 'model' && editTarget) {
+    } else if (type === 'crawler') {
+      const crawlerId = data.id;
+      const crawlerBody: Crawler = {
+        protocol: data.protocol as CrawlerProtocol,
+        endpoint: data.endpoint,
+        // Preserve existing keys when renaming or editing a crawler, or initialize empty array for new crawlers
+        keys: editTarget ? newConfig.crawlers[editTarget.crawlerId!].keys : [],
+      };
+
+      // If the crawler was renamed (id changed), remove the old entry first.
+      if (editTarget && editTarget.crawlerId && editTarget.crawlerId !== crawlerId) {
+        delete newConfig.crawlers[editTarget.crawlerId];
+      }
+      newConfig.crawlers[crawlerId] = crawlerBody;
+    } else if (type === 'model' && editTarget && editTarget.providerId) {
       const usageValues = ['chat', 'embedding', 'transcription', 'tts', 'image-generation'] as const;
       const validUsage = usageValues.find((u) => u === data.usage) ?? 'chat';
 
@@ -174,12 +210,24 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({
         type: (data.type as AiKey['type']) || undefined,
       };
 
-      const keys = newConfig.providers[editTarget.providerId].keys;
-      if (editTarget.itemId !== undefined) {
-        // Replace the existing key at the stored array index.
-        keys[Number(editTarget.itemId)] = apiKey;
-      } else {
-        keys.push(apiKey);
+      // For crawler keys, we need to handle the crawlerId
+      if (editTarget.crawlerId) {
+        const keys = newConfig.crawlers[editTarget.crawlerId].keys;
+        if (editTarget.itemId !== undefined) {
+          // Replace the existing key at the stored array index.
+          keys[Number(editTarget.itemId)] = apiKey;
+        } else {
+          keys.push(apiKey);
+        }
+      } else if (editTarget.providerId) {
+        // For provider keys
+        const keys = newConfig.providers[editTarget.providerId].keys;
+        if (editTarget.itemId !== undefined) {
+          // Replace the existing key at the stored array index.
+          keys[Number(editTarget.itemId)] = apiKey;
+        } else {
+          keys.push(apiKey);
+        }
       }
     }
 
@@ -358,6 +406,34 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({
                         </>
                       );
                     })()}
+                  </>
+                )}
+
+                {/* ── Crawler form ──────────────────────────────────────── */}
+                {type === 'crawler' && (
+                  <>
+                    <TextField isRequired name="id" defaultValue={getInitialValue('id')}>
+                      <Label>Unique ID</Label>
+                      <Input placeholder="firecrawl-primary" />
+                    </TextField>
+
+                    <TextField
+                      isRequired
+                      name="protocol"
+                      defaultValue={getInitialValue('protocol')}
+                    >
+                      <Label>Protocol</Label>
+                      <Input placeholder="firecrawl, scrapegraphai" />
+                    </TextField>
+
+                    <TextField
+                      isRequired
+                      name="endpoint"
+                      defaultValue={getInitialValue('endpoint')}
+                    >
+                      <Label>API Endpoint</Label>
+                      <Input placeholder="https://api.firecrawl.dev/v0" />
+                    </TextField>
                   </>
                 )}
 

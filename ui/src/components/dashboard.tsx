@@ -40,6 +40,7 @@ import {
   Save,
   Server,
   Settings,
+  Webhook,
   X,
 } from 'lucide-react';
 import type { AiConfig, AiModel } from '../types/ai-config';
@@ -51,6 +52,7 @@ import {
 } from '../lib/provider-models';
 import { PlaygroundPanel } from './playground-panel';
 import { ProviderCard } from './ui/ProviderCard';
+import { CrawlerCard } from './ui/CrawlerCard';
 import { ConfigModal } from './ui/ConfigModal';
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -58,12 +60,14 @@ import { ConfigModal } from './ui/ConfigModal';
  * Identifies the entity being added or edited inside the modal.
  * `itemId` is optional:
  *   - provider: not used (providerId is the identifier)
+ *   - crawler: not used (crawlerId is the identifier)
  *   - model: the model.id string
  *   - key: the numeric index in the keys array (as a string)
  */
 interface EditTarget {
-  type: 'provider' | 'model' | 'key';
-  providerId: string;
+  type: 'provider' | 'model' | 'key' | 'crawler';
+  providerId?: string;
+  crawlerId?: string;
   /** Model id or key array index (stringified) when editing an existing item. */
   itemId?: string;
 }
@@ -395,6 +399,34 @@ export const Dashboard: React.FC = () => {
     stageConfig(newConfig);
   };
 
+  /**
+   * Removes a crawler (and all its keys) from the config.
+   * @param id - The crawler dictionary key.
+   */
+  const deleteCrawler = (id: string) => {
+    if (!activeConfig) return;
+    if (!confirm(`Delete crawler "${id}" and all its keys?`)) return;
+
+    // Spread-clone the top level, then delete the key from the cloned crawlers map.
+    const newConfig: AiConfig = JSON.parse(JSON.stringify(activeConfig));
+    delete newConfig.crawlers[id];
+    stageConfig(newConfig);
+  };
+
+  /**
+   * Deletes a key from a crawler.
+   * @param crawlerId - The crawler dictionary key.
+   * @param keyIndex - The index of the key to delete.
+   */
+  const deleteCrawlerKey = (crawlerId: string, keyIndex: number) => {
+    if (!activeConfig) return;
+    if (!confirm(`Delete this API key from "${crawlerId}"?`)) return;
+
+    const newConfig: AiConfig = JSON.parse(JSON.stringify(activeConfig));
+    newConfig.crawlers[crawlerId].keys.splice(keyIndex, 1);
+    stageConfig(newConfig);
+  };
+
   // ── Render guards ─────────────────────────────────────────────────────────
 
   if (!activeConfig && loading) {
@@ -528,6 +560,12 @@ export const Dashboard: React.FC = () => {
                     Providers
                   </div>
                 </Tabs.Tab>
+                <Tabs.Tab id="crawlers">
+                  <div className="flex items-center gap-2">
+                    <Webhook className="h-4 w-4" />
+                    Crawlers
+                  </div>
+                </Tabs.Tab>
               </Tabs.List>
             </Tabs.ListContainer>
 
@@ -594,6 +632,44 @@ export const Dashboard: React.FC = () => {
                 ))}
               </div>
             </Tabs.Panel>
+
+            <Tabs.Panel id="crawlers" className="mt-6">
+              <div className="mb-4 flex items-center justify-between">
+                <h2 className="text-lg font-semibold">Web Crawlers</h2>
+                <Button
+                  size="sm"
+                  onPress={() => openModal('crawler', null)}
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add Crawler
+                </Button>
+              </div>
+
+              <div className="grid gap-6">
+                {activeConfig.crawlers && Object.entries(activeConfig.crawlers).map(([id, crawler]) => (
+                  <CrawlerCard
+                    key={id}
+                    id={id}
+                    crawler={crawler}
+                    onDelete={() => deleteCrawler(id)}
+                    onEdit={() =>
+                      openModal('crawler', { type: 'crawler', crawlerId: id })
+                    }
+                    onAddKey={() =>
+                      openModal('key', { type: 'key', crawlerId: id })
+                    }
+                    onEditKey={(keyIndex) =>
+                      openModal('key', {
+                        type: 'key',
+                        crawlerId: id,
+                        itemId: keyIndex.toString(),
+                      })
+                    }
+                    onDeleteKey={(index) => deleteCrawlerKey(id, index)}
+                  />
+                ))}
+              </div>
+            </Tabs.Panel>
           </Tabs>
         )}
       </main>
@@ -609,4 +685,3 @@ export const Dashboard: React.FC = () => {
     </div>
   );
 };
-
