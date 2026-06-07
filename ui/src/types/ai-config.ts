@@ -37,7 +37,7 @@ export type AiProtocol =
 /**
  * Supported crawler protocols.
  */
-export type CrawlerProtocol = 'firecrawl' | 'scrapegraphai';
+export type CrawlerProtocol = 'firecrawl' | 'exa' | 'scrapegraphai';
 
 /** Supported input modalities for a model. */
 export type AiModalityInput = 'text' | 'image' | 'audio' | 'video';
