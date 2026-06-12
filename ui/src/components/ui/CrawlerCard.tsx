@@ -309,6 +309,17 @@ export const CrawlerCard: React.FC<CrawlerCardProps> = ({
                               </Table.Row>
                             );
                           })}
+                          {/* Total row */}
+                          <Table.Row key="total">
+                            <Table.Cell className="font-bold">Total</Table.Cell>
+                            <Table.Cell className="font-bold">
+                              {creditUsages.reduce((total, usage) =>
+                                total + (usage.error ? 0 : usage.remainingCredits), 0
+                              ).toLocaleString()}
+                            </Table.Cell>
+                            <Table.Cell className="font-bold">-</Table.Cell>
+                            <Table.Cell className="font-bold">-</Table.Cell>
+                          </Table.Row>
                         </Table.Body>
                       </Table.Content>
                     </Table.ScrollContainer>
