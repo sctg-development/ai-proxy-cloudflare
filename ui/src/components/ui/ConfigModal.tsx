@@ -148,6 +148,7 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({
         gatewayEndpoint: data.gatewayEndpoint || undefined,
         gatewayModelPrefix: data.gatewayModelPrefix || undefined,
         modelCardEndpoint: data.modelCardEndpoint || undefined,
+        userAgent: data.userAgent || undefined,
         // Preserve existing keys/models when renaming or editing a provider.
         keys: editTarget ? newConfig.providers[editTarget.providerId!].keys : [],
         models: editTarget
@@ -231,6 +232,16 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({
       }
     }
 
+    // Sort providers by provider ID (alphabetically)
+    newConfig.providers = Object.fromEntries(
+      Object.entries(newConfig.providers).sort(([a], [b]) => a.localeCompare(b))
+    );
+
+    // Sort models by priority (ascending - lower number = higher priority)
+    Object.values(newConfig.providers).forEach(provider => {
+      provider.models.sort((a, b) => a.priority - b.priority);
+    });
+
     onSave(newConfig);
   };
 
@@ -303,6 +314,14 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({
                     >
                       <Label>Model Card Endpoint (optional)</Label>
                       <Input placeholder="https://platform.openai.com/models/{model}" />
+                    </TextField>
+
+                    <TextField
+                      name="userAgent"
+                      defaultValue={getInitialValue('userAgent')}
+                    >
+                      <Label>Custom User Agent (optional)</Label>
+                      <Input placeholder="e.g. MyApp/1.0" />
                     </TextField>
                   </>
                 )}

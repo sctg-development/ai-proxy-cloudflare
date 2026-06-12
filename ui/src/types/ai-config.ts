@@ -114,6 +114,8 @@ export interface AiProvider {
   models: AiModel[];
   /** Optional model card endpoint */
   modelCardEndpoint?: string;
+  /** Optional custom user agent for requests */
+  userAgent?: string;
 }
 
 /**
