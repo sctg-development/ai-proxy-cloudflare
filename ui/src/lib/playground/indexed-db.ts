@@ -24,7 +24,7 @@ const getPlaygroundDb = () =>
 
 const sanitizePart = (part: PlaygroundPart): PlaygroundPart => {
   if (part.type === 'image' || part.type === 'video') {
-    const { thumbnailUrl: _thumbnailUrl, ...rest } = part as typeof part & { thumbnailUrl?: string };
+    const { thumbnailUrl: _, ...rest } = part as typeof part & { thumbnailUrl?: string };
     return rest as PlaygroundPart;
   }
   return part;

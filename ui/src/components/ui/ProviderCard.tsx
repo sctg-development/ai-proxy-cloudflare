@@ -16,7 +16,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Button,
   Card,
@@ -24,7 +24,7 @@ import {
   Table,
   Tabs,
 } from '@heroui/react';
-import { Box, DownloadCloud, Edit, Key, Plus, Trash2 } from 'lucide-react';
+import { Box, DownloadCloud, Edit, Eye, EyeOff, Key, Plus, Trash2, Clipboard, Check } from 'lucide-react';
 import type { AiProvider, AiModel } from '../../types/ai-config';
 import { ModelPriorityList } from './ModelPriorityList';
 
@@ -102,6 +102,31 @@ export const ProviderCard: React.FC<ProviderCardProps> = ({
   onReorderModels,
 }) => {
   const resolvedModelCardEndpoint = getProviderModelCardEndpoint(provider);
+  const [visibleKeys, setVisibleKeys] = useState<Set<number>>(new Set());
+  const [copiedKeyIndex, setCopiedKeyIndex] = useState<number | null>(null);
+
+  const toggleKeyVisibility = (index: number) => {
+    setVisibleKeys(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(index)) {
+        newSet.delete(index);
+      } else {
+        newSet.add(index);
+      }
+      return newSet;
+    });
+  };
+
+  const copyToClipboard = (key: string, index: number) => {
+    navigator.clipboard.writeText(key).then(() => {
+      setCopiedKeyIndex(index);
+      setTimeout(() => {
+        setCopiedKeyIndex(null);
+      }, 2000);
+    }).catch(err => {
+      console.error('Failed to copy key to clipboard:', err);
+    });
+  };
 
   return (
     <Card className="overflow-hidden border-l-4 border-l-primary">
@@ -230,10 +255,50 @@ export const ProviderCard: React.FC<ProviderCardProps> = ({
                   <Table.Body>
                     {provider.keys.map((apiKey, index) => (
                       <Table.Row key={index}>
-                        {/* Show only first 8 and last 4 chars to avoid exposing the key */}
+                        {/* Show full key if visible, otherwise show masked version */}
                         <Table.Cell className="font-mono">
-                          {apiKey.key.substring(0, 8)}…
-                          {apiKey.key.substring(apiKey.key.length - 4)}
+                          <div className="flex items-center gap-2">
+                            {visibleKeys.has(index) ? (
+                              apiKey.key
+                            ) : (
+                              <>
+                                {apiKey.key.substring(0, 8)}…
+                                {apiKey.key.substring(apiKey.key.length - 4)}
+                              </>
+                            )}
+                            <div className="flex gap-1 ml-2">
+                              {/* Toggle visibility button */}
+                              <Button
+                                isIconOnly
+                                size="sm"
+                                variant="ghost"
+                                onPress={() => toggleKeyVisibility(index)}
+                                aria-label={visibleKeys.has(index) ? `Hide key ${index}` : `Show key ${index}`}
+                              >
+                                {visibleKeys.has(index) ? (
+                                  <EyeOff className="h-3.5 w-3.5" />
+                                ) : (
+                                  <Eye className="h-3.5 w-3.5" />
+                                )}
+                              </Button>
+                              {/* Copy to clipboard button (only shown when key is visible) */}
+                              {visibleKeys.has(index) && (
+                                <Button
+                                  isIconOnly
+                                  size="sm"
+                                  variant="ghost"
+                                  onPress={() => copyToClipboard(apiKey.key, index)}
+                                  aria-label={`Copy key ${index} to clipboard`}
+                                >
+                                  {copiedKeyIndex === index ? (
+                                    <Check className="h-3.5 w-3.5" />
+                                  ) : (
+                                    <Clipboard className="h-3.5 w-3.5" />
+                                  )}
+                                </Button>
+                              )}
+                            </div>
+                          </div>
                         </Table.Cell>
                         <Table.Cell>{apiKey.owner ?? '—'}</Table.Cell>
                         <Table.Cell>

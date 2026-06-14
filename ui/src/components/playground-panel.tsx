@@ -150,7 +150,6 @@ export const PlaygroundPanel: React.FC<PlaygroundPanelProps> = ({
             topP,
             stream: streamEnabled,
           }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [baseMessages, maxTokens, selection.modelId, streamEnabled, systemPrompt, temperature, topP, useMistralConversations],
   );
 

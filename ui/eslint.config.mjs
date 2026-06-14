@@ -29,6 +29,7 @@
  */
 
 import tseslint from 'typescript-eslint';
+import reactHooks from 'eslint-plugin-react-hooks';
 
 export default tseslint.config(
   /* ── Files to ignore ──────────────────────────────────────────────────── */
@@ -38,6 +39,9 @@ export default tseslint.config(
   ...tseslint.configs.recommended,
   {
     files: ['src/**/*.{ts,tsx}'],
+    plugins: {
+      'react-hooks': reactHooks,
+    },
     languageOptions: {
       parserOptions: {
         // Enables type-aware linting rules (slower but more accurate)
@@ -49,13 +53,19 @@ export default tseslint.config(
       /* Disallow implicit `any` to keep strong typing */
       '@typescript-eslint/no-explicit-any': 'warn',
       /* Flag variables that are declared but never used */
-      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+      '@typescript-eslint/no-unused-vars': ['error', { 
+        argsIgnorePattern: '^_',
+        varsIgnorePattern: '^_',
+      }],
       /* Require explicit return types on exported functions */
       '@typescript-eslint/explicit-module-boundary-types': 'off',
       /* Prefer const over let where the value is never reassigned */
       'prefer-const': 'error',
       /* Disallow console.log in production code (use proper logging) */
       'no-console': ['warn', { allow: ['warn', 'error'] }],
+      ...reactHooks.configs.recommended.rules,
+      'react-hooks/preserve-manual-memoization': 'off',
+      'react-hooks/set-state-in-effect': 'off',
     },
   },
 
