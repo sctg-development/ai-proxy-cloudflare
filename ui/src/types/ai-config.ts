@@ -88,10 +88,18 @@ export interface AiModel {
    */
   inputModalities?: AiModalityInput[];
   /**
-   * Output modalities the model can produce. When absent the playground
-   * assumes `['text']` for backward compatibility with existing configs.
+   * Output modalities the model can produce. When absent the playground assumes
+   * `['text']` for backward compatibility with existing configs.
    */
   outputModalities?: AiModalityOutput[];
+  /** Whether the model supports image inputs */
+  supportsImages?: boolean;
+  /** Whether the model supports prompt caching */
+  supportsPromptCache?: boolean;
+  /** Whether the model supports tools/function calling */
+  supportsTools?: boolean;
+  /** Whether the model supports advanced reasoning capabilities */
+  supportsReasoning?: boolean;
 }
 
 /**

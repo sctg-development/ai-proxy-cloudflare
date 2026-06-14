@@ -106,6 +106,12 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({
       const provider = config.providers[editTarget.providerId];
       const model = provider.models.find((m) => m.id === editTarget.itemId);
       const val = (((model as unknown) as Record<string, unknown> | undefined))?.[fieldName];
+
+      // Handle boolean fields with default false value
+      if (['supportsImages', 'supportsPromptCache', 'supportsTools', 'supportsReasoning'].includes(fieldName)) {
+        return String(val ?? false);
+      }
+
       if (Array.isArray(val)) return JSON.stringify(val);
       return String(val ?? '');
     }
@@ -185,6 +191,12 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({
       const inputModalities = rawInputModalities as AiModel['inputModalities'];
       const outputModalities = rawOutputModalities as AiModel['outputModalities'];
 
+      // Collect capability checkboxes
+      const supportsImages = formData.get('supportsImages') === 'on';
+      const supportsPromptCache = formData.get('supportsPromptCache') === 'on';
+      const supportsTools = formData.get('supportsTools') === 'on';
+      const supportsReasoning = formData.get('supportsReasoning') === 'on';
+
       const model: AiModel = {
         id: data.id,
         usage: validUsage,
@@ -194,6 +206,10 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({
         tpmLimit: data.tpmLimit ? Number(data.tpmLimit) : null,
         ...(rawInputModalities.length > 0 ? { inputModalities } : {}),
         ...(rawOutputModalities.length > 0 ? { outputModalities } : {}),
+        ...(supportsImages ? { supportsImages } : {}),
+        ...(supportsPromptCache ? { supportsPromptCache } : {}),
+        ...(supportsTools ? { supportsTools } : {}),
+        ...(supportsReasoning ? { supportsReasoning } : {}),
       };
 
       const models = newConfig.providers[editTarget.providerId].models;
@@ -379,6 +395,42 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({
                       <Label>TPM Limit (optional)</Label>
                       <Input type="number" min="1" placeholder="Leave empty for unlimited" />
                     </TextField>
+
+                    {/* Model capabilities checkboxes */}
+                    <div className="grid grid-cols-2 gap-4">
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          name="supportsImages"
+                          defaultChecked={getInitialValue('supportsImages') === 'true'}
+                        />
+                        Supports Images
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          name="supportsPromptCache"
+                          defaultChecked={getInitialValue('supportsPromptCache') === 'true'}
+                        />
+                        Supports Prompt Cache
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          name="supportsTools"
+                          defaultChecked={getInitialValue('supportsTools') === 'true'}
+                        />
+                        Supports Tools
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          name="supportsReasoning"
+                          defaultChecked={getInitialValue('supportsReasoning') === 'true'}
+                        />
+                        Supports Reasoning
+                      </label>
+                    </div>
 
                     {/* Option D — manual modality override */}
                     {(() => {
