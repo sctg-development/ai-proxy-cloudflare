@@ -44,6 +44,10 @@ export interface AiModel {
   priority: number;
   tags?: string[];
   gatewayPrefix?: string;
+  supportsImages?: boolean;
+  supportsPromptCache?: boolean;
+  supportsTools?: boolean;
+  supportsReasoning?: boolean;
 }
 
 export interface AiProvider {

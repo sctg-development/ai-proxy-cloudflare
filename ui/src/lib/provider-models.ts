@@ -442,6 +442,9 @@ async function fetchCohereModels(
       if (features.includes('vision')) {
         inputModalities.push('image');
       }
+      if (features.includes('tool_images')) {
+        outputModalities.push('image');
+      }
 
       return model(
         id,
@@ -451,6 +454,10 @@ async function fetchCohereModels(
         null,
         inputModalities,
         outputModalities,
+        features.includes('vision'),
+        undefined, // supportsPromptCache: Cohere doesn't explicitly return this in /models features
+        features.includes('tools'),
+        features.includes('reasoning'),
       );
     })
     .filter((m) => m.contextWindow > 0 || m.usage === 'embedding');
@@ -669,6 +676,10 @@ function model(
   tpmLimit: number | null,
   inputModalities?: AiModalityInput[],
   outputModalities?: AiModalityOutput[],
+  supportsImages?: boolean,
+  supportsPromptCache?: boolean,
+  supportsTools?: boolean,
+  supportsReasoning?: boolean,
 ): AiModel {
   return {
     id,
@@ -679,6 +690,10 @@ function model(
     priority: 0,
     ...(inputModalities ? { inputModalities } : {}),
     ...(outputModalities ? { outputModalities } : {}),
+    ...(supportsImages !== undefined ? { supportsImages } : {}),
+    ...(supportsPromptCache !== undefined ? { supportsPromptCache } : {}),
+    ...(supportsTools !== undefined ? { supportsTools } : {}),
+    ...(supportsReasoning !== undefined ? { supportsReasoning } : {}),
   };
 }
 
