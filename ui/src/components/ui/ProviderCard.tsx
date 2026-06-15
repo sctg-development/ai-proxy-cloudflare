@@ -16,17 +16,20 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Button,
   Card,
   Chip,
   Table,
   Tabs,
+  Modal,
+  useOverlayState,
 } from '@heroui/react';
-import { Box, DownloadCloud, Edit, Eye, EyeOff, Key, Plus, Trash2, Clipboard, Check } from 'lucide-react';
+import { Box, DownloadCloud, Edit, Eye, EyeOff, Key, Plus, Trash2, Clipboard, Check, AlertTriangle } from 'lucide-react';
 import type { AiProvider, AiModel } from '../../types/ai-config';
 import { ModelPriorityList } from './ModelPriorityList';
+import { ModelDeletionModal } from './ModelDeletionModal';
 
 /** Props for {@link ProviderCard}. */
 interface ProviderCardProps {
@@ -66,6 +69,10 @@ interface ProviderCardProps {
   modelSyncMessage?: string;
   /** Called with models in their new visual order. */
   onReorderModels: (models: AiModel[]) => void;
+  /** Called when models need to be deleted after API refresh detects missing models. */
+  onDeleteMissingModels?: (modelIds: string[]) => void;
+  /** List of model IDs that are available from the provider API (used to detect missing models). */
+  availableModelIds?: string[];
 }
 
 /** Backward-compatible read for legacy snake_case provider field. */
@@ -100,10 +107,43 @@ export const ProviderCard: React.FC<ProviderCardProps> = ({
   isRefreshingModels,
   modelSyncMessage,
   onReorderModels,
+  onDeleteMissingModels,
+  availableModelIds,
 }) => {
   const resolvedModelCardEndpoint = getProviderModelCardEndpoint(provider);
   const [visibleKeys, setVisibleKeys] = useState<Set<number>>(new Set());
   const [copiedKeyIndex, setCopiedKeyIndex] = useState<number | null>(null);
+  const [modelsToDelete, setModelsToDelete] = useState<AiModel[]>([]);
+  const deletionModalState = useOverlayState();
+
+  // Detect models that exist in config but not in API response
+  const detectMissingModels = () => {
+    if (!availableModelIds || availableModelIds.length === 0) {
+      return;
+    }
+
+    const missingModels = provider.models.filter(model =>
+      !availableModelIds.includes(model.id)
+    );
+
+    if (missingModels.length > 0) {
+      setModelsToDelete(missingModels);
+      deletionModalState.open();
+    }
+  };
+
+  // Automatically detect missing models when availableModelIds changes
+  useEffect(() => {
+    if (availableModelIds && availableModelIds.length > 0) {
+      detectMissingModels();
+    }
+  }, [availableModelIds]);
+
+  // Handle deletion of selected models
+  const handleDeleteMissingModels = (modelIds: string[]) => {
+    onDeleteMissingModels?.(modelIds);
+    setModelsToDelete([]);
+  };
 
   const toggleKeyVisibility = (index: number) => {
     setVisibleKeys(prev => {
@@ -129,7 +169,8 @@ export const ProviderCard: React.FC<ProviderCardProps> = ({
   };
 
   return (
-    <Card className="overflow-hidden border-l-4 border-l-primary">
+    <>
+      <Card className="overflow-hidden border-l-4 border-l-primary">
       {/* ── Provider header ──────────────────────────────────────────────── */}
       <Card.Header className="flex flex-row items-center justify-between bg-muted/5 p-4">
         <div className="flex flex-col gap-1">
@@ -340,5 +381,14 @@ export const ProviderCard: React.FC<ProviderCardProps> = ({
         </Tabs>
       </Card.Content>
     </Card>
+
+    {/* Model Deletion Modal */}
+    <ModelDeletionModal
+      state={deletionModalState}
+      providerId={id}
+      modelsToDelete={modelsToDelete}
+      onDeleteModels={handleDeleteMissingModels}
+    />
+    </>
   );
 };

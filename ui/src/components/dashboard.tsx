@@ -110,6 +110,9 @@ export const Dashboard: React.FC = () => {
   /** Per-provider sync status shown next to the model list after refresh. */
   const [modelSyncMessages, setModelSyncMessages] = useState<Record<string, string>>({});
 
+  /** Per-provider list of available model IDs from the last API refresh. */
+  const [availableModelIds, setAvailableModelIds] = useState<Record<string, string[]>>({});
+
   /**
    * Controlled open/close state for the config modal.
    * `useOverlayState` is the HeroUI-idiomatic way to drive a Modal from
@@ -247,8 +250,22 @@ export const Dashboard: React.FC = () => {
       }
 
       const newConfig: AiConfig = JSON.parse(JSON.stringify(activeConfig));
-      newConfig.providers[id].models = result.models;
+      
+      // Merge: keep existing models that are not in the new list, 
+      // but update existing ones and add new ones from result.models.
+      const newModelIds = new Set(result.models.map(m => m.id));
+      const missingModels = newConfig.providers[id].models.filter(m => !newModelIds.has(m.id));
+      
+      newConfig.providers[id].models = [...result.models, ...missingModels];
       stageConfig(newConfig);
+
+      // Store available model IDs for missing model detection
+      const availableIds = result.models.map(model => model.id);
+      setAvailableModelIds((prev) => ({
+        ...prev,
+        [id]: availableIds,
+      }));
+
       setModelSyncMessages((messages) => ({
         ...messages,
         [id]: [
@@ -300,8 +317,22 @@ export const Dashboard: React.FC = () => {
       }
 
       const newConfig: AiConfig = JSON.parse(JSON.stringify(activeConfig));
-      newConfig.providers[id].models = result.models;
+      
+      // Merge: keep existing models that are not in the new list, 
+      // but update existing ones and add new ones from result.models.
+      const newModelIds = new Set(result.models.map(m => m.id));
+      const missingModels = newConfig.providers[id].models.filter(m => !newModelIds.has(m.id));
+      
+      newConfig.providers[id].models = [...result.models, ...missingModels];
       stageConfig(newConfig);
+
+      // Store available model IDs for missing model detection
+      const availableIds = result.models.map(model => model.id);
+      setAvailableModelIds((prev) => ({
+        ...prev,
+        [id]: availableIds,
+      }));
+
       setModelSyncMessages((messages) => ({
         ...messages,
         [id]: [
@@ -356,8 +387,22 @@ export const Dashboard: React.FC = () => {
       }
 
       const newConfig: AiConfig = JSON.parse(JSON.stringify(activeConfig));
-      newConfig.providers[id].models = latestModels;
+      
+      // Merge: keep existing models that are not in the new list, 
+      // but update existing ones and add new ones from latestModels.
+      const newModelIds = new Set(latestModels.map(m => m.id));
+      const missingModels = newConfig.providers[id].models.filter(m => !newModelIds.has(m.id));
+      
+      newConfig.providers[id].models = [...latestModels, ...missingModels];
       stageConfig(newConfig);
+
+      // Store available model IDs for missing model detection
+      const availableIds = latestModels.map(model => model.id);
+      setAvailableModelIds((prev) => ({
+        ...prev,
+        [id]: availableIds,
+      }));
+
       setModelSyncMessages((messages) => ({
         ...messages,
         [id]: [
@@ -399,6 +444,26 @@ export const Dashboard: React.FC = () => {
       newConfig.providers[id].models.filter((model) => !toDelete.has(model.id)),
     );
     stageConfig(newConfig);
+  };
+
+  /**
+   * Deletes models that are no longer available in the provider's API.
+   * This is called from the ModelDeletionModal when the user confirms deletion.
+   */
+  const deleteMissingModels = (id: string, modelIds: string[]) => {
+    if (!activeConfig || modelIds.length === 0) return;
+    const toDelete = new Set(modelIds);
+    const newConfig: AiConfig = JSON.parse(JSON.stringify(activeConfig));
+    newConfig.providers[id].models = renumberPriorities(
+      newConfig.providers[id].models.filter((model) => !toDelete.has(model.id)),
+    );
+    stageConfig(newConfig);
+
+    // Clear the available model IDs for this provider to avoid re-triggering the modal
+    setAvailableModelIds((prev) => ({
+      ...prev,
+      [id]: [],
+    }));
   };
 
   /**
@@ -665,6 +730,8 @@ export const Dashboard: React.FC = () => {
                     isRefreshingModels={syncingProviderId === id}
                     modelSyncMessage={modelSyncMessages[id]}
                     onReorderModels={(models) => reorderProviderModels(id, models)}
+                    onDeleteMissingModels={(modelIds) => deleteMissingModels(id, modelIds)}
+                    availableModelIds={availableModelIds[id]}
                   />
                 ))}
               </div>
