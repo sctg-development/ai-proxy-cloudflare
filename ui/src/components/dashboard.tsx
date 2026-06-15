@@ -40,6 +40,7 @@ import {
   Save,
   Server,
   Settings,
+  Upload,
   Webhook,
   X,
 } from 'lucide-react';
@@ -50,6 +51,7 @@ import {
   maskApiKey,
   renumberPriorities,
 } from '../lib/provider-models';
+import { validateAiConfigSchema } from '../lib/utils/file-utils';
 import { PlaygroundPanel } from './playground-panel';
 import { ProviderCard } from './ui/ProviderCard';
 import { CrawlerCard } from './ui/CrawlerCard';
@@ -519,6 +521,41 @@ export const Dashboard: React.FC = () => {
               URL.revokeObjectURL(url);
             }}>
               <Download className="h-4 w-4" />
+            </Button>
+            <Button variant="ghost" size="sm" onPress={() => {
+              const fileInput = document.createElement('input');
+              fileInput.type = 'file';
+              fileInput.accept = '.json';
+              fileInput.onchange = (e) => {
+                const file = (e.target as HTMLInputElement).files?.[0];
+                if (!file) return;
+
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                  try {
+                    const content = event.target?.result as string;
+                    const parsedConfig = JSON.parse(content);
+
+                    // Validate the schema
+                    if (!validateAiConfigSchema(parsedConfig)) {
+                      alert('Invalid configuration file. Please upload a valid AI configuration file.');
+                      return;
+                    }
+
+                    // Merge with current config or replace?
+                    if (confirm('Replace current configuration with the uploaded file?')) {
+                      stageConfig(parsedConfig);
+                    }
+                  } catch (error) {
+                    console.error('Error parsing configuration file:', error);
+                    alert('Error parsing configuration file. Please check the file format.');
+                  }
+                };
+                reader.readAsText(file);
+              };
+              fileInput.click();
+            }}>
+              <Upload className="h-4 w-4" />
             </Button>
             <Button variant="danger-soft" size="sm" onPress={logout}>
               <LogOut className="mr-2 h-4 w-4" />

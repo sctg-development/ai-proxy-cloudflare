@@ -20,6 +20,7 @@
  * File utility functions for handling file operations and formatting.
  */
 import type { PlaygroundFile } from '../../types/playground-types';
+import type { AiConfig, AiProtocol, CrawlerProtocol } from '../../types/ai-config';
 
 export const MAX_CONTEXT_FILE_BYTES = 256 * 1024;
 
@@ -132,4 +133,101 @@ export const extractGeneratedFiles = (content: string) => {
   }
 
   return files;
+};
+
+/**
+ * Validates that a parsed JSON object matches the expected AI configuration schema.
+ * @param config - The parsed configuration object to validate.
+ * @returns True if the configuration is valid, false otherwise.
+ */
+export const validateAiConfigSchema = (config: any): config is AiConfig => {
+  // Check basic structure
+  if (typeof config !== 'object' || config === null) return false;
+  if (typeof config.version !== 'number') return false;
+  if (typeof config.providers !== 'object' || config.providers === null) return false;
+  if (typeof config.crawlers !== 'object' || config.crawlers === null) return false;
+
+  // Validate providers
+  for (const [providerId, provider] of Object.entries(config.providers)) {
+    if (typeof providerId !== 'string' || !providerId.trim()) return false;
+
+    // Check provider structure - use type assertion since we're validating
+    const providerObj = provider as any;
+    if (typeof providerObj !== 'object' || providerObj === null) return false;
+
+    // Validate protocol
+    const validProtocols: AiProtocol[] = [
+      'openai', 'groq', 'sambanova', 'anthropic', 'gemini',
+      'mistral', 'openrouter', 'morph', 'cohere'
+    ];
+    if (!validProtocols.includes(providerObj.protocol as AiProtocol)) return false;
+
+    // Validate endpoint
+    if (typeof providerObj.endpoint !== 'string' || !providerObj.endpoint.trim()) return false;
+
+    // Validate keys array
+    if (!Array.isArray(providerObj.keys)) return false;
+    for (const key of providerObj.keys) {
+      if (typeof key !== 'object' || key === null) return false;
+      if (typeof key.key !== 'string' || !key.key.trim()) return false;
+      if (key.owner !== undefined && typeof key.owner !== 'string') return false;
+      if (key.type !== undefined && !['expired', 'free', 'paid', 'premium', 'unlimited'].includes(key.type)) return false;
+    }
+
+    // Validate models array
+    if (!Array.isArray(providerObj.models)) return false;
+    for (const model of providerObj.models) {
+      if (typeof model !== 'object' || model === null) return false;
+      if (typeof model.id !== 'string' || !model.id.trim()) return false;
+      if (!['chat', 'embedding', 'transcription', 'tts', 'image-generation'].includes(model.usage)) return false;
+      if (typeof model.contextWindow !== 'number' || model.contextWindow <= 0) return false;
+      if (typeof model.maxOutputTokens !== 'number' || model.maxOutputTokens < 0) return false;
+      if (model.tpmLimit !== null && (typeof model.tpmLimit !== 'number' || model.tpmLimit <= 0)) return false;
+      if (typeof model.priority !== 'number') return false;
+
+      // Optional fields validation
+      if (model.tags !== undefined && (!Array.isArray(model.tags) || !model.tags.every((tag: any) => typeof tag === 'string'))) return false;
+      if (model.gatewayPrefix !== undefined && typeof model.gatewayPrefix !== 'string') return false;
+      if (model.supportsImages !== undefined && typeof model.supportsImages !== 'boolean') return false;
+      if (model.supportsPromptCache !== undefined && typeof model.supportsPromptCache !== 'boolean') return false;
+      if (model.supportsTools !== undefined && typeof model.supportsTools !== 'boolean') return false;
+      if (model.supportsReasoning !== undefined && typeof model.supportsReasoning !== 'boolean') return false;
+      if (model.inputModalities !== undefined && (!Array.isArray(model.inputModalities) || !model.inputModalities.every((modality: any) => ['text', 'image', 'audio', 'video'].includes(modality)))) return false;
+      if (model.outputModalities !== undefined && (!Array.isArray(model.outputModalities) || !model.outputModalities.every((modality: any) => ['text', 'image', 'audio'].includes(modality)))) return false;
+    }
+
+    // Optional provider fields
+    if (providerObj.gatewayEndpoint !== undefined && typeof providerObj.gatewayEndpoint !== 'string') return false;
+    if (providerObj.gatewayModelPrefix !== undefined && typeof providerObj.gatewayModelPrefix !== 'string') return false;
+    if (providerObj.gatewayKey !== undefined && typeof providerObj.gatewayKey !== 'string') return false;
+    if (providerObj.modelCardEndpoint !== undefined && typeof providerObj.modelCardEndpoint !== 'string') return false;
+    if (providerObj.userAgent !== undefined && typeof providerObj.userAgent !== 'string') return false;
+  }
+
+  // Validate crawlers
+  for (const [crawlerId, crawler] of Object.entries(config.crawlers)) {
+    if (typeof crawlerId !== 'string' || !crawlerId.trim()) return false;
+
+    // Check crawler structure - use type assertion since we're validating
+    const crawlerObj = crawler as any;
+    if (typeof crawlerObj !== 'object' || crawlerObj === null) return false;
+
+    // Validate protocol
+    const validCrawlerProtocols: CrawlerProtocol[] = ['firecrawl', 'exa', 'scrapegraphai'];
+    if (!validCrawlerProtocols.includes(crawlerObj.protocol as CrawlerProtocol)) return false;
+
+    // Validate endpoint
+    if (typeof crawlerObj.endpoint !== 'string' || !crawlerObj.endpoint.trim()) return false;
+
+    // Validate keys array
+    if (!Array.isArray(crawlerObj.keys)) return false;
+    for (const key of crawlerObj.keys) {
+      if (typeof key !== 'object' || key === null) return false;
+      if (typeof key.key !== 'string' || !key.key.trim()) return false;
+      if (key.owner !== undefined && typeof key.owner !== 'string') return false;
+      if (key.type !== undefined && !['expired', 'free', 'paid', 'premium', 'unlimited'].includes(key.type)) return false;
+    }
+  }
+
+  return true;
 };
