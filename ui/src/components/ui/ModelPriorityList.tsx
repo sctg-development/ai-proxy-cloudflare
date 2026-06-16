@@ -67,10 +67,10 @@ export const ModelPriorityList: React.FC<ModelPriorityListProps> = ({
     const endpoint = modelCardEndpoint.trim();
     if (!endpoint) return '';
     if (endpoint.includes('{model}')) {
-      return endpoint.split('{model}').join(encodeURIComponent(modelId));
+      return endpoint.split('{model}').join((modelId));
     }
     const trimmedBase = endpoint.replace(/\/+$/, '');
-    return `${trimmedBase}/${encodeURIComponent(modelId)}`;
+    return `${trimmedBase}/${(modelId)}`;
   };
 
   /** Model IDs checked for a batch delete operation. */
