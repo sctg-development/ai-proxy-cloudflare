@@ -23,10 +23,9 @@ import {
   Chip,
   Table,
   Tabs,
-  Modal,
   useOverlayState,
 } from '@heroui/react';
-import { Box, DownloadCloud, Edit, Eye, EyeOff, Key, Plus, Trash2, Clipboard, Check, AlertTriangle } from 'lucide-react';
+import { Box, DownloadCloud, Edit, Eye, EyeOff, Key, Plus, Trash2, Clipboard, Check } from 'lucide-react';
 import type { AiProvider, AiModel } from '../../types/ai-config';
 import { ModelPriorityList } from './ModelPriorityList';
 import { ModelDeletionModal } from './ModelDeletionModal';
