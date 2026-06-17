@@ -363,7 +363,30 @@ async function fetchOpenRouterModels(
           : numberField(topProvider, 'max_completion_tokens') ??
             numberField(item, 'max_completion_tokens') ??
             contextWindow;
-      return model(id, usage, contextWindow, maxOutputTokens, null, inputModalities, outputModalities);
+
+      // Extract additional capabilities from the API response
+      const pricing = recordField(item, 'pricing');
+      const supportedParameters = stringArrayField(item, 'supported_parameters');
+
+      // Determine support for various features
+      const supportsImages = inputModalities?.includes('image') ?? false;
+      const supportsPromptCache = numberField(pricing, 'input_cache_read') !== null;
+      const supportsTools = supportedParameters.includes('tool_choice') || supportedParameters.includes('tools');
+      const supportsReasoning = supportedParameters.includes('structured_outputs') || supportedParameters.includes('reasoning');
+
+      return model(
+        id,
+        usage,
+        contextWindow,
+        maxOutputTokens,
+        null,
+        inputModalities,
+        outputModalities,
+        supportsImages,
+        supportsPromptCache,
+        supportsTools,
+        supportsReasoning
+      );
     });
 
   return {

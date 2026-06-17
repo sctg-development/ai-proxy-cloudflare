@@ -23,7 +23,7 @@ import {
   Table,
   useOverlayState,
 } from '@heroui/react';
-import { AlertTriangle, Trash2, Check, X } from 'lucide-react';
+import { AlertTriangle, Trash2, X} from 'lucide-react';
 import type { AiModel } from '../../types/ai-config';
 
 /** Props for {@link ModelDeletionModal}. */
