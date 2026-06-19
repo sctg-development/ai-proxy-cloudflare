@@ -26,6 +26,8 @@
 
 import { extractBearerToken } from "./auth";
 
+type KVNamespace = any;
+
 /**
  * Time granularity for usage statistics aggregation.
  */
@@ -432,8 +434,27 @@ export async function migrateUsageNdjson(
 			const existingData = await kv.get(kvKey, "json");
 			const existingRecords = Array.isArray(existingData) ? existingData : [];
 
-			// Merge with new records
-			const updatedRecords = [...existingRecords, ...records];
+			// Create a Set of unique record keys from existing records
+			const existingRecordKeys = new Set<string>();
+			for (const existingRecord of existingRecords) {
+				const recordKey = `${existingRecord.ts}:${existingRecord.provider}:${existingRecord.modelId}:${existingRecord.keyOwner}:${existingRecord.keyHint}`;
+				existingRecordKeys.add(recordKey);
+			}
+
+			// Filter out duplicates from new records
+			const newUniqueRecords: UsageNdjsonRecord[] = [];
+			for (const record of records) {
+				const recordKey = `${record.ts}:${record.provider}:${record.modelId}:${record.keyOwner}:${record.keyHint}`;
+				if (!existingRecordKeys.has(recordKey)) {
+					newUniqueRecords.push(record);
+					inserted += 1;
+				} else {
+					duplicates += 1;
+				}
+			}
+
+			// Merge with new unique records
+			const updatedRecords = [...existingRecords, ...newUniqueRecords];
 
 			// Write with retry mechanism
 			let attempts = 0;
@@ -443,13 +464,11 @@ export async function migrateUsageNdjson(
 			while (attempts < maxAttempts && !success) {
 				try {
 					await kv.put(kvKey, JSON.stringify(updatedRecords));
-					inserted += 1;
 					success = true;
 				} catch (e) {
 					attempts++;
 					if (attempts >= maxAttempts) {
 						console.error(`[usage-db] Failed to migrate usage for period ${period} after retries:`, e);
-						duplicates += 1; // Treat as duplicate if we can't write
 					} else {
 						// Small delay before retry
 						await new Promise((resolve) => setTimeout(resolve, 100));
@@ -532,8 +551,27 @@ export async function migrateErrorNdjson(
 			const existingData = await kv.get(kvKey, "json");
 			const existingRecords = Array.isArray(existingData) ? existingData : [];
 
-			// Merge with new records
-			const updatedRecords = [...existingRecords, ...records];
+			// Create a Set of unique record keys from existing records
+			const existingRecordKeys = new Set<string>();
+			for (const existingRecord of existingRecords) {
+				const recordKey = `${existingRecord.ts}:${existingRecord.provider}:${existingRecord.modelId}:${existingRecord.keyOwner}:${existingRecord.keyHint}:${existingRecord.errorCode}`;
+				existingRecordKeys.add(recordKey);
+			}
+
+			// Filter out duplicates from new records
+			const newUniqueRecords: ErrorNdjsonRecord[] = [];
+			for (const record of records) {
+				const recordKey = `${record.ts}:${record.provider}:${record.modelId}:${record.keyOwner}:${record.keyHint}:${record.errorCode}`;
+				if (!existingRecordKeys.has(recordKey)) {
+					newUniqueRecords.push(record);
+					inserted += 1;
+				} else {
+					duplicates += 1;
+				}
+			}
+
+			// Merge with new unique records
+			const updatedRecords = [...existingRecords, ...newUniqueRecords];
 
 			// Write with retry mechanism
 			let attempts = 0;
@@ -543,13 +581,11 @@ export async function migrateErrorNdjson(
 			while (attempts < maxAttempts && !success) {
 				try {
 					await kv.put(kvKey, JSON.stringify(updatedRecords));
-					inserted += 1;
 					success = true;
 				} catch (e) {
 					attempts++;
 					if (attempts >= maxAttempts) {
 						console.error(`[usage-db] Failed to migrate errors for period ${period} after retries:`, e);
-						duplicates += 1; // Treat as duplicate if we can't write
 					} else {
 						// Small delay before retry
 						await new Promise((resolve) => setTimeout(resolve, 100));
@@ -596,8 +632,8 @@ export async function getUsageStats(
 			const keyParts = kvKey.name.split(":");
 			if (keyParts.length < 4) continue;
 
-			// Reconstruct the full period: YYYY-MM-DDTHH:00
-			const recordPeriod = `${keyParts[2]}:${keyParts[3]}`; // Combine HH and :00
+			// Extract the period directly (keyParts[2] contains the full period YYYY-MM-DDTHH:00)
+			const recordPeriod = keyParts[2];
 			const recordDate = parseHourBucket(recordPeriod);
 			if (recordDate < cutoff) continue;
 

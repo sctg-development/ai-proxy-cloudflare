@@ -493,6 +493,11 @@ app.post("/v1/keypool/error", async (c) => {
  * Get usage statistics grouped by period.
  * Query params: period (hour|day|week|month, default: day)
  * Requires a valid user Bearer token.
+ * 
+ * ```bash
+ * curl -X GET "https://your-worker-url/v1/keypool/stats?period=day" \
+ *      -H	 "Authorization: Bearer <user-token>"
+ * ```
  */
 app.get("/v1/keypool/stats", async (c) => {
 	const env = c.env;
