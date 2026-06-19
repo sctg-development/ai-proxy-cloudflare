@@ -72,6 +72,14 @@ export interface KeyUsageStat {
 }
 
 /**
+ * Result returned when migrating usage NDJSON into KV.
+ */
+export interface MigrateResult {
+	inserted: number;
+	duplicates: number;
+}
+
+/**
  * Aggregated error statistics for one key over the retained error history.
  * Compatible with KeyErrorStat from KeypoolUsageDb.ts
  */
@@ -351,6 +359,168 @@ export async function recordError(
 	} catch (e) {
 		console.error("[usage-db] Failed to record error:", e);
 	}
+}
+
+interface UsageNdjsonRecord extends KeyUsageEntry {
+	ts: number;
+}
+
+interface ErrorNdjsonRecord extends KeyErrorEntry {
+	ts: number;
+}
+
+/**
+ * Migrate a usage NDJSON payload into KV for the authenticated user.
+ * Existing KV records are skipped as duplicates.
+ */
+export async function migrateUsageNdjson(
+	kv: KVNamespace,
+	userId: string,
+	body: string,
+): Promise<MigrateResult> {
+	const aggregated = new Map<string, AggregatedUsageRecord>();
+
+	for (const rawLine of body.split(/\r?\n/)) {
+		const line = rawLine.trim();
+		if (!line) continue;
+
+		let record: UsageNdjsonRecord;
+		try {
+			record = JSON.parse(line) as UsageNdjsonRecord;
+		} catch {
+			continue;
+		}
+
+		if (
+			!record.provider ||
+			!record.modelId ||
+			!record.keyOwner ||
+			!record.keyHint ||
+			typeof record.promptTokens !== "number" ||
+			typeof record.completionTokens !== "number" ||
+			typeof record.ts !== "number"
+		) {
+			continue;
+		}
+
+		const period = formatPeriodLabel(record.ts, "hour");
+		const key = `${period}\x00${record.provider}\x00${record.keyOwner}\x00${record.keyHint}`;
+		const existing = aggregated.get(key);
+
+		if (existing) {
+			existing.promptTokens += record.promptTokens;
+			existing.completionTokens += record.completionTokens;
+			existing.requestCount += 1;
+		} else {
+			aggregated.set(key, {
+				period,
+				provider: record.provider,
+				modelId: record.modelId,
+				keyOwner: record.keyOwner,
+				keyHint: record.keyHint,
+				promptTokens: record.promptTokens,
+				completionTokens: record.completionTokens,
+				requestCount: 1,
+			});
+		}
+	}
+
+	let inserted = 0;
+	let duplicates = 0;
+
+	for (const entry of aggregated.values()) {
+		const kvKey = makeUsageKey(userId, entry.period, entry.provider, entry.keyOwner, entry.keyHint);
+		const existing = await kv.get(kvKey);
+		if (existing !== null) {
+			duplicates += 1;
+			continue;
+		}
+
+		try {
+			await kv.put(kvKey, JSON.stringify(entry));
+			inserted += 1;
+		} catch (e) {
+			console.error("[usage-db] Failed to migrate usage record:", e);
+		}
+	}
+
+	return { inserted, duplicates };
+}
+
+/**
+ * Migrate an error NDJSON payload into KV for the authenticated user.
+ * Existing KV records are skipped as duplicates.
+ */
+export async function migrateErrorNdjson(
+	kv: KVNamespace,
+	userId: string,
+	body: string,
+): Promise<MigrateResult> {
+	const aggregated = new Map<string, AggregatedErrorRecord>();
+
+	for (const rawLine of body.split(/\r?\n/)) {
+		const line = rawLine.trim();
+		if (!line) continue;
+
+		let record: ErrorNdjsonRecord;
+		try {
+			record = JSON.parse(line) as ErrorNdjsonRecord;
+		} catch {
+			continue;
+		}
+
+		if (
+			!record.provider ||
+			!record.modelId ||
+			!record.keyOwner ||
+			!record.keyHint ||
+			typeof record.errorCode !== "number" && record.errorCode !== null ||
+			typeof record.ts !== "number"
+		) {
+			continue;
+		}
+
+		const period = formatPeriodLabel(record.ts, "hour");
+		const key = `${period}\x00${record.provider}\x00${record.keyOwner}\x00${record.keyHint}`;
+		const existing = aggregated.get(key);
+
+		if (existing) {
+			existing.errorCount += 1;
+			if (record.errorCode !== null) {
+				existing.lastErrorCode = record.errorCode;
+			}
+		} else {
+			aggregated.set(key, {
+				period,
+				provider: record.provider,
+				keyOwner: record.keyOwner,
+				keyHint: record.keyHint,
+				errorCount: 1,
+				lastErrorCode: record.errorCode,
+			});
+		}
+	}
+
+	let inserted = 0;
+	let duplicates = 0;
+
+	for (const entry of aggregated.values()) {
+		const kvKey = makeErrorKey(userId, entry.period, entry.provider, entry.keyOwner, entry.keyHint);
+		const existing = await kv.get(kvKey);
+		if (existing !== null) {
+			duplicates += 1;
+			continue;
+		}
+
+		try {
+			await kv.put(kvKey, JSON.stringify(entry));
+			inserted += 1;
+		} catch (e) {
+			console.error("[usage-db] Failed to migrate error record:", e);
+		}
+	}
+
+	return { inserted, duplicates };
 }
 
 /**

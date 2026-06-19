@@ -39,6 +39,8 @@ import {
 	purge,
 	getFileSizeBytes,
 	getUserIdFromAuth,
+	migrateUsageNdjson,
+	migrateErrorNdjson,
 	type KeyUsageEntry,
 	type KeyErrorEntry,
 	type UsagePeriod,
@@ -523,6 +525,68 @@ app.get("/v1/keypool/errors", async (c) => {
 
 	const stats = await getErrorStats(env.KV_AI_PROXY, userId);
 	return c.json({ object: "list", data: stats });
+});
+
+/**
+ * POST /v1/keypool/migrate/usage
+ *
+ * Migrate a usage NDJSON file into KV for the authenticated user.
+ * Existing KV records are skipped and counted as duplicates.
+ * Requires a valid user Bearer token.
+ */
+app.post("/v1/keypool/migrate/usage", async (c) => {
+	const env = c.env;
+	const authHeader = c.req.header("Authorization") ?? null;
+	const userId = getUserIdFromAuth(authHeader);
+
+	if (!userId) {
+		return c.json({ error: "Missing Authorization header" }, { status: 401 });
+	}
+
+	let body: string;
+	try {
+		body = await c.req.text();
+	} catch {
+		return c.json({ error: "Failed to read request body" }, { status: 400 });
+	}
+
+	if (!body || body.trim().length === 0) {
+		return c.json({ error: "Empty NDJSON payload" }, { status: 400 });
+	}
+
+	const result = await migrateUsageNdjson(env.KV_AI_PROXY, userId, body);
+	return c.json({ ok: true, inserted: result.inserted, duplicates: result.duplicates });
+});
+
+/**
+ * POST /v1/keypool/migrate/errors
+ *
+ * Migrate an error NDJSON file into KV for the authenticated user.
+ * Existing KV records are skipped and counted as duplicates.
+ * Requires a valid user Bearer token.
+ */
+app.post("/v1/keypool/migrate/errors", async (c) => {
+	const env = c.env;
+	const authHeader = c.req.header("Authorization") ?? null;
+	const userId = getUserIdFromAuth(authHeader);
+
+	if (!userId) {
+		return c.json({ error: "Missing Authorization header" }, { status: 401 });
+	}
+
+	let body: string;
+	try {
+		body = await c.req.text();
+	} catch {
+		return c.json({ error: "Failed to read request body" }, { status: 400 });
+	}
+
+	if (!body || body.trim().length === 0) {
+		return c.json({ error: "Empty NDJSON payload" }, { status: 400 });
+	}
+
+	const result = await migrateErrorNdjson(env.KV_AI_PROXY, userId, body);
+	return c.json({ ok: true, inserted: result.inserted, duplicates: result.duplicates });
 });
 
 /**
