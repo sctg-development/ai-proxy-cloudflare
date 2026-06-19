@@ -626,16 +626,17 @@ export async function getUsageStats(
 			limit: MAX_RECORDS_PER_QUERY,
 		});
 
-		// Process each hour bucket
-		for (const kvKey of listResult.keys) {
-			// Parse period from key: usage:{userId}:YYYY-MM-DDTHH:00
-			const keyParts = kvKey.name.split(":");
-			if (keyParts.length < 4) continue;
+			// Process each hour bucket
+			for (const kvKey of listResult.keys) {
+				// Parse period from key: usage:{userId}:YYYY-MM-DDTHH:00
+				const keyParts = kvKey.name.split(":");
+				if (keyParts.length < 4) continue;
 
-			// Extract the period directly (keyParts[2] contains the full period YYYY-MM-DDTHH:00)
-			const recordPeriod = keyParts[2];
-			const recordDate = parseHourBucket(recordPeriod);
-			if (recordDate < cutoff) continue;
+				// Reconstruct the full period: YYYY-MM-DDTHH:00
+				// keyParts[2] contains YYYY-MM-DDTHH, keyParts[3] contains 00
+				const recordPeriod = `${keyParts[2]}:${keyParts[3]}`;
+				const recordDate = parseHourBucket(recordPeriod);
+				if (recordDate < cutoff) continue;
 
 			// Get the array of raw records for this hour
 			const value = await kv.get(kvKey.name, "json");
@@ -725,7 +726,7 @@ export async function getErrorStats(
 	}>();
 	const usageMap = new Map<string, number>();
 
-	try {
+		try {
 		// Get usage counts from raw hourly records (new format: usage:{userId}:YYYY-MM-DDTHH:00)
 		const usageList = await kv.list({
 			prefix: `usage:${userId}:`,
@@ -733,6 +734,17 @@ export async function getErrorStats(
 		});
 
 		for (const kvKey of usageList.keys) {
+			// Parse period from key: usage:{userId}:YYYY-MM-DDTHH:00
+			const keyParts = kvKey.name.split(":");
+			if (keyParts.length < 4) continue;
+
+			// Reconstruct the full period: YYYY-MM-DDTHH:00
+			const recordPeriod = `${keyParts[2]}:${keyParts[3]}`;
+			const recordDate = parseHourBucket(recordPeriod);
+			const cutoff = periodCutoffMs("month"); // Use month cutoff for consistency
+
+			if (recordDate < cutoff) continue;
+
 			const value = await kv.get(kvKey.name, "json");
 			if (!Array.isArray(value)) continue;
 
