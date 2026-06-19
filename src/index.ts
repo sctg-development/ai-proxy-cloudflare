@@ -533,6 +533,7 @@ app.get("/v1/keypool/errors", async (c) => {
  * Migrate a usage NDJSON file into KV for the authenticated user.
  * Existing KV records are skipped and counted as duplicates.
  * Requires a valid user Bearer token.
+ * Optional query parameters: startline, endline (1-based line numbers)
  * ```bash
  * curl -X POST "https://your-worker-url/v1/keypool/migrate/usage" \
  *      -H "Authorization: Bearer <	user-token>" \
@@ -560,7 +561,27 @@ app.post("/v1/keypool/migrate/usage", async (c) => {
 		return c.json({ error: "Empty NDJSON payload" }, { status: 400 });
 	}
 
-	const result = await migrateUsageNdjson(env.KV_AI_PROXY, userId, body);
+	// Extract optional line range parameters
+	const startline = c.req.query("startline");
+	const endline = c.req.query("endline");
+
+	// Convert to numbers if provided
+	const start = startline ? parseInt(startline) : undefined;
+	const end = endline ? parseInt(endline) : undefined;
+
+	// Validate parameters
+	if ((start === undefined) || (end === undefined)) {
+		return c.json({ error: "Missing required query parameters: startline, endline" }, { status: 400 });
+	} 
+	if ((startline && isNaN(start)) || (endline && isNaN(end))) {
+			return c.json({ error: "startline and endline must be valid numbers" }, { status: 400 });
+		}	
+
+	if (start !== undefined && end !== undefined && start > end) {
+		return c.json({ error: "startline must be less than or equal to endline" }, { status: 400 });
+	}
+
+	const result = await migrateUsageNdjson(env.KV_AI_PROXY, userId, body, start as number | undefined, end as number | undefined);
 	return c.json({ ok: true, inserted: result.inserted, duplicates: result.duplicates });
 });
 
@@ -570,6 +591,7 @@ app.post("/v1/keypool/migrate/usage", async (c) => {
  * Migrate an error NDJSON file into KV for the authenticated user.
  * Existing KV records are skipped and counted as duplicates.
  * Requires a valid user Bearer token.
+ * Optional query parameters: startline, endline (1-based line numbers)
  * ```bash
  * curl -X POST "https://your-worker-url/v1/keypool/migrate/errors" \
  * 	    -H "Authorization: Bearer <user-token>" \
@@ -597,7 +619,27 @@ app.post("/v1/keypool/migrate/errors", async (c) => {
 		return c.json({ error: "Empty NDJSON payload" }, { status: 400 });
 	}
 
-	const result = await migrateErrorNdjson(env.KV_AI_PROXY, userId, body);
+	// Extract optional line range parameters
+	const startline = c.req.query("startline");
+	const endline = c.req.query("endline");
+
+	// Convert to numbers if provided
+	const start = startline ? parseInt(startline) : undefined;
+	const end = endline ? parseInt(endline) : undefined;
+
+	// Validate parameters
+	if ((start === undefined) || (end === undefined)) {
+		return c.json({ error: "Missing required query parameters: startline, endline" }, { status: 400 });
+	}
+	if ((startline && isNaN(start)) || (endline && isNaN(end))) {
+		return c.json({ error: "startline and endline must be valid numbers" }, { status: 400 });
+	}
+
+	if (start !== undefined && end !== undefined && start > end) {
+		return c.json({ error: "startline must be less than or equal to endline" }, { status: 400 });
+	}
+
+	const result = await migrateErrorNdjson(env.KV_AI_PROXY, userId, body, start as number | undefined, end as number | undefined);
 	return c.json({ ok: true, inserted: result.inserted, duplicates: result.duplicates });
 });
 

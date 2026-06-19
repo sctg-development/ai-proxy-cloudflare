@@ -371,16 +371,27 @@ interface ErrorNdjsonRecord extends KeyErrorEntry {
 
 /**
  * Migrate a usage NDJSON payload into KV for the authenticated user.
- * Existing KV records are skipped as duplicates.
+ * Uses hourly buckets with raw NDJSON lines stored in arrays.
  */
 export async function migrateUsageNdjson(
 	kv: KVNamespace,
 	userId: string,
 	body: string,
+	startline?: number,
+	endline?: number,
 ): Promise<MigrateResult> {
-	const aggregated = new Map<string, AggregatedUsageRecord>();
+	// Group records by hour period
+	const hourlyRecords = new Map<string, UsageNdjsonRecord[]>();
 
-	for (const rawLine of body.split(/\r?\n/)) {
+	// Split body into lines
+	const lines = body.split(/\r?\n/);
+
+	// Determine the range of lines to process
+	const start = startline !== undefined ? Math.max(0, startline - 1) : 0; // Convert to 0-based index
+	const end = endline !== undefined ? Math.min(lines.length - 1, endline - 1) : lines.length - 1; // Convert to 0-based index
+
+	for (let i = start; i <= end; i++) {
+		const rawLine = lines[i];
 		const line = rawLine.trim();
 		if (!line) continue;
 
@@ -404,43 +415,55 @@ export async function migrateUsageNdjson(
 		}
 
 		const period = formatPeriodLabel(record.ts, "hour");
-		const key = `${period}\x00${record.provider}\x00${record.keyOwner}\x00${record.keyHint}`;
-		const existing = aggregated.get(key);
-
-		if (existing) {
-			existing.promptTokens += record.promptTokens;
-			existing.completionTokens += record.completionTokens;
-			existing.requestCount += 1;
-		} else {
-			aggregated.set(key, {
-				period,
-				provider: record.provider,
-				modelId: record.modelId,
-				keyOwner: record.keyOwner,
-				keyHint: record.keyHint,
-				promptTokens: record.promptTokens,
-				completionTokens: record.completionTokens,
-				requestCount: 1,
-			});
-		}
+		const existing = hourlyRecords.get(period) || [];
+		existing.push(record);
+		hourlyRecords.set(period, existing);
 	}
 
 	let inserted = 0;
 	let duplicates = 0;
 
-	for (const entry of aggregated.values()) {
-		const kvKey = makeUsageKey(userId, entry.period, entry.provider, entry.keyOwner, entry.keyHint);
-		const existing = await kv.get(kvKey);
-		if (existing !== null) {
-			duplicates += 1;
-			continue;
-		}
+	// Process each hour bucket with rate limiting
+	for (const [period, records] of hourlyRecords) {
+		const kvKey = `usage:${userId}:${period}`;
 
 		try {
-			await kv.put(kvKey, JSON.stringify(entry));
-			inserted += 1;
+			// Read existing records for this hour
+			const existingData = await kv.get(kvKey, "json");
+			const existingRecords = Array.isArray(existingData) ? existingData : [];
+
+			// Merge with new records
+			const updatedRecords = [...existingRecords, ...records];
+
+			// Write with retry mechanism
+			let attempts = 0;
+			const maxAttempts = 3;
+			let success = false;
+
+			while (attempts < maxAttempts && !success) {
+				try {
+					await kv.put(kvKey, JSON.stringify(updatedRecords));
+					inserted += 1;
+					success = true;
+				} catch (e) {
+					attempts++;
+					if (attempts >= maxAttempts) {
+						console.error(`[usage-db] Failed to migrate usage for period ${period} after retries:`, e);
+						duplicates += 1; // Treat as duplicate if we can't write
+					} else {
+						// Small delay before retry
+						await new Promise((resolve) => setTimeout(resolve, 100));
+					}
+				}
+			}
+
+			// Rate limiting: wait between writes to different keys
+			if (hourlyRecords.size > 1) {
+				await new Promise((resolve) => setTimeout(resolve, 100));
+			}
 		} catch (e) {
-			console.error("[usage-db] Failed to migrate usage record:", e);
+			console.error(`[usage-db] Failed to process usage for period ${period}:`, e);
+			duplicates += 1;
 		}
 	}
 
@@ -449,16 +472,27 @@ export async function migrateUsageNdjson(
 
 /**
  * Migrate an error NDJSON payload into KV for the authenticated user.
- * Existing KV records are skipped as duplicates.
+ * Uses hourly buckets with raw NDJSON lines stored in arrays.
  */
 export async function migrateErrorNdjson(
 	kv: KVNamespace,
 	userId: string,
 	body: string,
+	startline?: number,
+	endline?: number,
 ): Promise<MigrateResult> {
-	const aggregated = new Map<string, AggregatedErrorRecord>();
+	// Group records by hour period
+	const hourlyRecords = new Map<string, ErrorNdjsonRecord[]>();
 
-	for (const rawLine of body.split(/\r?\n/)) {
+	// Split body into lines
+	const lines = body.split(/\r?\n/);
+
+	// Determine the range of lines to process
+	const start = startline !== undefined ? Math.max(0, startline - 1) : 0; // Convert to 0-based index
+	const end = endline !== undefined ? Math.min(lines.length - 1, endline - 1) : lines.length - 1; // Convert to 0-based index
+
+	for (let i = start; i <= end; i++) {
+		const rawLine = lines[i];
 		const line = rawLine.trim();
 		if (!line) continue;
 
@@ -474,49 +508,62 @@ export async function migrateErrorNdjson(
 			!record.modelId ||
 			!record.keyOwner ||
 			!record.keyHint ||
-			typeof record.errorCode !== "number" && record.errorCode !== null ||
+			(typeof record.errorCode !== "number" && record.errorCode !== null) ||
 			typeof record.ts !== "number"
 		) {
 			continue;
 		}
 
 		const period = formatPeriodLabel(record.ts, "hour");
-		const key = `${period}\x00${record.provider}\x00${record.keyOwner}\x00${record.keyHint}`;
-		const existing = aggregated.get(key);
-
-		if (existing) {
-			existing.errorCount += 1;
-			if (record.errorCode !== null) {
-				existing.lastErrorCode = record.errorCode;
-			}
-		} else {
-			aggregated.set(key, {
-				period,
-				provider: record.provider,
-				keyOwner: record.keyOwner,
-				keyHint: record.keyHint,
-				errorCount: 1,
-				lastErrorCode: record.errorCode,
-			});
-		}
+		const existing = hourlyRecords.get(period) || [];
+		existing.push(record);
+		hourlyRecords.set(period, existing);
 	}
 
 	let inserted = 0;
 	let duplicates = 0;
 
-	for (const entry of aggregated.values()) {
-		const kvKey = makeErrorKey(userId, entry.period, entry.provider, entry.keyOwner, entry.keyHint);
-		const existing = await kv.get(kvKey);
-		if (existing !== null) {
-			duplicates += 1;
-			continue;
-		}
+	// Process each hour bucket with rate limiting
+	for (const [period, records] of hourlyRecords) {
+		const kvKey = `errors:${userId}:${period}`;
 
 		try {
-			await kv.put(kvKey, JSON.stringify(entry));
-			inserted += 1;
+			// Read existing records for this hour
+			const existingData = await kv.get(kvKey, "json");
+			const existingRecords = Array.isArray(existingData) ? existingData : [];
+
+			// Merge with new records
+			const updatedRecords = [...existingRecords, ...records];
+
+			// Write with retry mechanism
+			let attempts = 0;
+			const maxAttempts = 3;
+			let success = false;
+
+			while (attempts < maxAttempts && !success) {
+				try {
+					await kv.put(kvKey, JSON.stringify(updatedRecords));
+					inserted += 1;
+					success = true;
+				} catch (e) {
+					attempts++;
+					if (attempts >= maxAttempts) {
+						console.error(`[usage-db] Failed to migrate errors for period ${period} after retries:`, e);
+						duplicates += 1; // Treat as duplicate if we can't write
+					} else {
+						// Small delay before retry
+						await new Promise((resolve) => setTimeout(resolve, 100));
+					}
+				}
+			}
+
+			// Rate limiting: wait between writes to different keys
+			if (hourlyRecords.size > 1) {
+				await new Promise((resolve) => setTimeout(resolve, 100));
+			}
 		} catch (e) {
-			console.error("[usage-db] Failed to migrate error record:", e);
+			console.error(`[usage-db] Failed to process errors for period ${period}:`, e);
+			duplicates += 1;
 		}
 	}
 
@@ -525,7 +572,7 @@ export async function migrateErrorNdjson(
 
 /**
  * Get usage statistics grouped by period, provider, owner, and key hint.
- * Reads pre-aggregated hourly records and groups them by requested period.
+ * Reads raw hourly NDJSON arrays and aggregates them by requested period.
  * Compatible with KeypoolUsageDb.getUsageStats()
  */
 export async function getUsageStats(
@@ -537,52 +584,63 @@ export async function getUsageStats(
 	const map = new Map<string, KeyUsageStat>();
 
 	try {
-		// List all usage keys for this user
+		// List all usage keys for this user (new format: usage:{userId}:YYYY-MM-DDTHH:00)
 		const listResult = await kv.list({
-			prefix: `${USAGE_KEY_PREFIX}:${userId}:`,
+			prefix: `usage:${userId}:`,
 			limit: MAX_RECORDS_PER_QUERY,
 		});
 
-		// Fetch and aggregate records
-		const promises = listResult.keys.map(async (kvKey) => {
-			const value = await kv.get(kvKey.name, "json");
-			if (!value || typeof value !== "object") return;
-
-			const record = value as AggregatedUsageRecord;
-
-			// Parse the period from the key to check cutoff
-			// Key format: usage:{userId}:{hour}:{provider}:{keyOwner}:{keyHint}
+		// Process each hour bucket
+		for (const kvKey of listResult.keys) {
+			// Parse period from key: usage:{userId}:YYYY-MM-DDTHH:00
 			const keyParts = kvKey.name.split(":");
-			if (keyParts.length < 5) return;
+			if (keyParts.length < 4) continue;
 
-			const recordPeriod = keyParts[2]; // The hour bucket
+			// Reconstruct the full period: YYYY-MM-DDTHH:00
+			const recordPeriod = `${keyParts[2]}:${keyParts[3]}`; // Combine HH and :00
 			const recordDate = parseHourBucket(recordPeriod);
-			if (recordDate < cutoff) return;
+			if (recordDate < cutoff) continue;
 
-			// Group by requested period
-			const label = formatPeriodLabel(recordDate, period);
-			const mapKey = `${label}\x00${record.provider}\x00${record.keyOwner}\x00${record.keyHint}`;
-			const existing = map.get(mapKey);
+			// Get the array of raw records for this hour
+			const value = await kv.get(kvKey.name, "json");
+			if (!Array.isArray(value)) continue;
 
-			if (existing) {
-				existing.promptTokens += record.promptTokens;
-				existing.completionTokens += record.completionTokens;
-				existing.requestCount += record.requestCount;
-			} else {
-				map.set(mapKey, {
-					period: label,
-					provider: record.provider,
-					modelId: record.modelId,
-					keyOwner: record.keyOwner,
-					keyHint: record.keyHint,
-					promptTokens: record.promptTokens,
-					completionTokens: record.completionTokens,
-					requestCount: record.requestCount,
-				});
+			// Aggregate all records in this hour bucket
+			for (const record of value) {
+				if (
+					!record.provider ||
+					!record.modelId ||
+					!record.keyOwner ||
+					!record.keyHint ||
+					typeof record.promptTokens !== "number" ||
+					typeof record.completionTokens !== "number"
+				) {
+					continue;
+				}
+
+				// Group by requested period
+				const label = formatPeriodLabel(recordDate, period);
+				const mapKey = `${label}\x00${record.provider}\x00${record.keyOwner}\x00${record.keyHint}`;
+				const existing = map.get(mapKey);
+
+				if (existing) {
+					existing.promptTokens += record.promptTokens;
+					existing.completionTokens += record.completionTokens;
+					existing.requestCount += 1;
+				} else {
+					map.set(mapKey, {
+						period: label,
+						provider: record.provider,
+						modelId: record.modelId,
+						keyOwner: record.keyOwner,
+						keyHint: record.keyHint,
+						promptTokens: record.promptTokens,
+						completionTokens: record.completionTokens,
+						requestCount: 1,
+					});
+				}
 			}
-		});
-
-		await Promise.all(promises);
+		}
 	} catch (e) {
 		console.error("[usage-db] Failed to get usage stats:", e);
 	}
@@ -615,7 +673,7 @@ function parseHourBucket(label: string): number {
 
 /**
  * Get error statistics grouped by provider, owner, and key hint.
- * Reads pre-aggregated hourly error records.
+ * Reads raw hourly NDJSON arrays and aggregates error rates.
  * Compatible with KeypoolUsageDb.getErrorStats()
  */
 export async function getErrorStats(
@@ -632,46 +690,69 @@ export async function getErrorStats(
 	const usageMap = new Map<string, number>();
 
 	try {
-		// Get usage counts from aggregated records
+		// Get usage counts from raw hourly records (new format: usage:{userId}:YYYY-MM-DDTHH:00)
 		const usageList = await kv.list({
-			prefix: `${USAGE_KEY_PREFIX}:${userId}:`,
+			prefix: `usage:${userId}:`,
 			limit: MAX_RECORDS_PER_QUERY,
 		});
 
 		for (const kvKey of usageList.keys) {
 			const value = await kv.get(kvKey.name, "json");
-			if (!value || typeof value !== "object") continue;
+			if (!Array.isArray(value)) continue;
 
-			const record = value as AggregatedUsageRecord;
-			const key = `${record.provider}\x00${record.keyOwner}\x00${record.keyHint}`;
-			usageMap.set(key, (usageMap.get(key) ?? 0) + record.requestCount);
+			// Count requests in this hour bucket
+			for (const record of value) {
+				if (
+					!record.provider ||
+					!record.keyOwner ||
+					!record.keyHint
+				) {
+					continue;
+				}
+
+				const key = `${record.provider}\x00${record.keyOwner}\x00${record.keyHint}`;
+				usageMap.set(key, (usageMap.get(key) ?? 0) + 1);
+			}
 		}
 
-		// Get error counts from aggregated records
+		// Get error counts from raw hourly records (new format: errors:{userId}:YYYY-MM-DDTHH:00)
 		const errorList = await kv.list({
-			prefix: `${ERRORS_KEY_PREFIX}:${userId}:`,
+			prefix: `errors:${userId}:`,
 			limit: MAX_RECORDS_PER_QUERY,
 		});
 
 		for (const kvKey of errorList.keys) {
 			const value = await kv.get(kvKey.name, "json");
-			if (!value || typeof value !== "object") continue;
+			if (!Array.isArray(value)) continue;
 
-			const record = value as AggregatedErrorRecord;
-			const key = `${record.provider}\x00${record.keyOwner}\x00${record.keyHint}`;
-			const existing = errorMap.get(key);
+			// Aggregate errors in this hour bucket
+			for (const record of value) {
+				if (
+					!record.provider ||
+					!record.keyOwner ||
+					!record.keyHint ||
+					(typeof record.errorCode !== "number" && record.errorCode !== null)
+				) {
+					continue;
+				}
 
-			if (existing) {
-				existing.errorCount += record.errorCount;
-				if (record.lastErrorCode !== null) existing.lastErrorCode = record.lastErrorCode;
-			} else {
-				errorMap.set(key, {
-					provider: record.provider,
-					keyOwner: record.keyOwner,
-					keyHint: record.keyHint,
-					errorCount: record.errorCount,
-					lastErrorCode: record.lastErrorCode,
-				});
+				const key = `${record.provider}\x00${record.keyOwner}\x00${record.keyHint}`;
+				const existing = errorMap.get(key);
+
+				if (existing) {
+					existing.errorCount += 1;
+					if (record.errorCode !== null) {
+						existing.lastErrorCode = record.errorCode;
+					}
+				} else {
+					errorMap.set(key, {
+						provider: record.provider,
+						keyOwner: record.keyOwner,
+						keyHint: record.keyHint,
+						errorCount: 1,
+						lastErrorCode: record.errorCode,
+					});
+				}
 			}
 		}
 	} catch (e) {
@@ -707,9 +788,9 @@ export async function purge(
 	let freed = 0;
 
 	try {
-		// Delete all usage records
+		// Delete all usage records (new format: usage:{userId}:YYYY-MM-DDTHH:00)
 		const usageList = await kv.list({
-			prefix: `${USAGE_KEY_PREFIX}:${userId}:`,
+			prefix: `usage:${userId}:`,
 			limit: MAX_RECORDS_PER_QUERY,
 		});
 
@@ -719,9 +800,9 @@ export async function purge(
 			await kv.delete(kvKey.name);
 		}
 
-		// Delete all error records
+		// Delete all error records (new format: errors:{userId}:YYYY-MM-DDTHH:00)
 		const errorList = await kv.list({
-			prefix: `${ERRORS_KEY_PREFIX}:${userId}:`,
+			prefix: `errors:${userId}:`,
 			limit: MAX_RECORDS_PER_QUERY,
 		});
 
@@ -748,8 +829,9 @@ export async function getFileSizeBytes(
 	let total = 0;
 
 	try {
+		// Get usage records (new format: usage:{userId}:YYYY-MM-DDTHH:00)
 		const usageList = await kv.list({
-			prefix: `${USAGE_KEY_PREFIX}:${userId}:`,
+			prefix: `usage:${userId}:`,
 			limit: MAX_RECORDS_PER_QUERY,
 		});
 
@@ -758,8 +840,9 @@ export async function getFileSizeBytes(
 			if (value) total += value.length;
 		}
 
+		// Get error records (new format: errors:{userId}:YYYY-MM-DDTHH:00)
 		const errorList = await kv.list({
-			prefix: `${ERRORS_KEY_PREFIX}:${userId}:`,
+			prefix: `errors:${userId}:`,
 			limit: MAX_RECORDS_PER_QUERY,
 		});
 
