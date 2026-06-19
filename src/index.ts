@@ -23,37 +23,49 @@
 // Maintains backward compatibility with legacy endpoints
 // Decrypts ai.json.enc stored in KV and validates user keys via KV
 
-import { Hono } from 'hono';
-import { logger } from 'hono/logger';
-import { cors } from 'hono/cors';
+import { Hono } from "hono";
+import { logger } from "hono/logger";
+import { cors } from "hono/cors";
 
-import { decryptAiConfig, type AiConfig, type AiModel } from './lib/ai-enc';
-import { validateUserKey, extractBearerToken } from './lib/auth';
-import { forwardToCfAiGateway, detectProvider } from './lib/gateway';
-import { checkBalance, deductBalance } from './lib/balance';
+import { decryptAiConfig, type AiConfig, type AiModel } from "./lib/ai-enc";
+import { validateUserKey, extractBearerToken } from "./lib/auth";
+import { forwardToCfAiGateway, detectProvider } from "./lib/gateway";
+import { checkBalance, deductBalance } from "./lib/balance";
+import {
+	recordUsage,
+	recordError,
+	getUsageStats,
+	getErrorStats,
+	purge,
+	getFileSizeBytes,
+	getUserIdFromAuth,
+	type KeyUsageEntry,
+	type KeyErrorEntry,
+	type UsagePeriod,
+} from "./lib/usage-db";
 
 /**
  * KV key where the encrypted AI provider configuration is stored.
  */
-const AI_JSON_ENC_KV_KEY = 'vault:ai.json.enc';
+const AI_JSON_ENC_KV_KEY = "vault:ai.json.enc";
 
 declare global {
-  interface Env {
-    KV_AI_PROXY: KVNamespace;
-    PROXY_RATE_LIMITER: RateLimit;
-    CLOUDFLARE_ACCOUNT_ID: string;
-    AI_JSON_CRYPTOKEN: string;
-    CLOUDFLARE_AIG_TOKEN: string;
-    DEBUG?: string;
-    /** Base URL of the Fufuni merchant backend (e.g. https://api.fufuni.pp.ua). Optional. */
-    FUFUNI_MERCHANT_URL?: string;
-    /** Shared secret for proxy-to-merchant balance API. Optional. */
-    AI_BALANCE_SHARED_SECRET?: string;
-  }
+	interface Env {
+		KV_AI_PROXY: KVNamespace;
+		PROXY_RATE_LIMITER: RateLimit;
+		CLOUDFLARE_ACCOUNT_ID: string;
+		AI_JSON_CRYPTOKEN: string;
+		CLOUDFLARE_AIG_TOKEN: string;
+		DEBUG?: string;
+		/** Base URL of the Fufuni merchant backend (e.g. https://api.fufuni.pp.ua). Optional. */
+		FUFUNI_MERCHANT_URL?: string;
+		/** Shared secret for proxy-to-merchant balance API. Optional. */
+		AI_BALANCE_SHARED_SECRET?: string;
+	}
 }
 
 type HonoEnv = {
-  Bindings: Env;
+	Bindings: Env;
 };
 
 const app = new Hono<HonoEnv>();
@@ -67,7 +79,7 @@ let cachedConfig: AiConfig | null = null;
 // ── Middleware ────────────────────────────────────────────────────────
 
 app.use(logger());
-app.use('*', cors());
+app.use("*", cors());
 
 /**
  * Read the raw encrypted configuration from KV.
@@ -77,11 +89,11 @@ app.use('*', cors());
  * @throws If the vault does not exist in KV or is empty
  */
 async function loadEncryptedVault(env: Env): Promise<string> {
-  const encryptedPayload = await env.KV_AI_PROXY.get(AI_JSON_ENC_KV_KEY);
-  if (!encryptedPayload || encryptedPayload.trim().length === 0) {
-    throw new Error('Encrypted vault (vault:ai.json.enc) not found in KV');
-  }
-  return encryptedPayload;
+	const encryptedPayload = await env.KV_AI_PROXY.get(AI_JSON_ENC_KV_KEY);
+	if (!encryptedPayload || encryptedPayload.trim().length === 0) {
+		throw new Error("Encrypted vault (vault:ai.json.enc) not found in KV");
+	}
+	return encryptedPayload;
 }
 
 /**
@@ -92,16 +104,16 @@ async function loadEncryptedVault(env: Env): Promise<string> {
  * @throws If the vault cannot be read or decryption fails
  */
 async function getAiConfig(env: Env): Promise<AiConfig> {
-  if (cachedConfig) return cachedConfig;
+	if (cachedConfig) return cachedConfig;
 
-  try {
-    const encryptedConfig = await loadEncryptedVault(env);
-    cachedConfig = await decryptAiConfig(encryptedConfig, env.AI_JSON_CRYPTOKEN);
-    return cachedConfig;
-  } catch (err) {
-    console.error('Failed to decrypt vault:', err);
-    throw new Error('Configuration unavailable');
-  }
+	try {
+		const encryptedConfig = await loadEncryptedVault(env);
+		cachedConfig = await decryptAiConfig(encryptedConfig, env.AI_JSON_CRYPTOKEN);
+		return cachedConfig;
+	} catch (err) {
+		console.error("Failed to decrypt vault:", err);
+		throw new Error("Configuration unavailable");
+	}
 }
 
 /**
@@ -112,35 +124,35 @@ async function getAiConfig(env: Env): Promise<AiConfig> {
  * @returns A 429 Response if the limit is exceeded, or null to proceed
  */
 async function checkRateLimit(
-  request: Request,
-  env: Env,
+	request: Request,
+	env: Env,
 ): Promise<Response | null> {
-  const limiter = env.PROXY_RATE_LIMITER;
-  if (!limiter) return null;
+	const limiter = env.PROXY_RATE_LIMITER;
+	if (!limiter) return null;
 
-  const ip =
-    request.headers.get('cf-connecting-ip') ||
-    request.headers.get('x-forwarded-for')?.split(',')[0] ||
-    'unknown';
+	const ip =
+		request.headers.get("cf-connecting-ip") ||
+		request.headers.get("x-forwarded-for")?.split(",")[0] ||
+		"unknown";
 
-  const url = new URL(request.url);
-  const key = `proxy:${ip}:${url.pathname}`;
+	const url = new URL(request.url);
+	const key = `proxy:${ip}:${url.pathname}`;
 
-  try {
-    const { success } = await limiter.limit({ key });
-    if (success) return null;
+	try {
+		const { success } = await limiter.limit({ key });
+		if (success) return null;
 
-    return new Response(JSON.stringify({ error: 'Rate limit exceeded' }), {
-      status: 429,
-      headers: {
-        'Content-Type': 'application/json',
-        'Retry-After': '60',
-      },
-    });
-  } catch (err) {
-    console.warn('Rate limiter unavailable:', err);
-    return null; // Let request through if limiter fails
-  }
+		return new Response(JSON.stringify({ error: "Rate limit exceeded" }), {
+			status: 429,
+			headers: {
+				"Content-Type": "application/json",
+				"Retry-After": "60",
+			},
+		});
+	} catch (err) {
+		console.warn("Rate limiter unavailable:", err);
+		return null; // Let request through if limiter fails
+	}
 }
 
 /**
@@ -152,13 +164,13 @@ async function checkRateLimit(
  * @returns true if the token is present and matches exactly
  */
 function isCryptoTokenValid(authHeader: string | null, expected: string): boolean {
-  if (!authHeader) return false;
-  const match = authHeader.match(/^Bearer\s+(.+)$/i);
-  return match ? match[1] === expected : false;
+	if (!authHeader) return false;
+	const match = authHeader.match(/^Bearer\s+(.+)$/i);
+	return match ? match[1] === expected : false;
 }
 
-function findProviderModel(provider: AiConfig['providers'][string], modelId: string): AiModel | null {
-  return provider.models.find((model) => model.id === modelId) ?? null;
+function findProviderModel(provider: AiConfig["providers"][string], modelId: string): AiModel | null {
+	return provider.models.find((model) => model.id === modelId) ?? null;
 }
 
 // ── Endpoints ─────────────────────────────────────────────────────
@@ -169,19 +181,19 @@ function findProviderModel(provider: AiConfig['providers'][string], modelId: str
  * Returns the raw OpenSSL‑encrypted vault as plain text (base64).
  * Unauthenticated – anyone with the worker URL can download the encrypted blob.
  */
-app.get('/ai.json.enc', async (c) => {
-  try {
-    const encrypted = await c.env.KV_AI_PROXY.get(AI_JSON_ENC_KV_KEY);
-    if (!encrypted) {
-      return c.text('Vault not found', { status: 404 });
-    }
-    return c.text(encrypted, {
-      headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-    });
-  } catch (err) {
-    console.error('Failed to serve encrypted vault:', err);
-    return c.text('Internal Server Error', { status: 500 });
-  }
+app.get("/ai.json.enc", async (c) => {
+	try {
+		const encrypted = await c.env.KV_AI_PROXY.get(AI_JSON_ENC_KV_KEY);
+		if (!encrypted) {
+			return c.text("Vault not found", { status: 404 });
+		}
+		return c.text(encrypted, {
+			headers: { "Content-Type": "text/plain; charset=utf-8" },
+		});
+	} catch (err) {
+		console.error("Failed to serve encrypted vault:", err);
+		return c.text("Internal Server Error", { status: 500 });
+	}
 });
 
 /**
@@ -194,32 +206,32 @@ app.get('/ai.json.enc', async (c) => {
  * After a successful upload, the in‑memory decrypted configuration cache
  * is cleared so the next proxy request will re‑decrypt with the new vault.
  */
-app.put('/ai.json.enc', async (c) => {
-  const authHeader = c.req.header('Authorization');
-  if (!isCryptoTokenValid(authHeader || null, c.env.AI_JSON_CRYPTOKEN)) {
-    return c.json({ error: 'Unauthorized' }, { status: 403 });
-  }
+app.put("/ai.json.enc", async (c) => {
+	const authHeader = c.req.header("Authorization");
+	if (!isCryptoTokenValid(authHeader || null, c.env.AI_JSON_CRYPTOKEN)) {
+		return c.json({ error: "Unauthorized" }, { status: 403 });
+	}
 
-  try {
-    const body = await c.req.text();
-    if (!body || body.trim().length === 0) {
-      return c.json({ error: 'Empty body' }, { status: 400 });
-    }
+	try {
+		const body = await c.req.text();
+		if (!body || body.trim().length === 0) {
+			return c.json({ error: "Empty body" }, { status: 400 });
+		}
 
-    await c.env.KV_AI_PROXY.put(AI_JSON_ENC_KV_KEY, body);
+		await c.env.KV_AI_PROXY.put(AI_JSON_ENC_KV_KEY, body);
 
-    // Invalidate in‑memory cache so the next configuration access
-    // re‑decrypts the freshly stored vault.
-    cachedConfig = null;
+		// Invalidate in‑memory cache so the next configuration access
+		// re‑decrypts the freshly stored vault.
+		cachedConfig = null;
 
-    return c.json({ ok: true, message: 'Vault updated' }, { status: 200 });
-  } catch (err) {
-    console.error('Failed to update vault:', err);
-    return c.json(
-      { error: 'Failed to store vault', message: err instanceof Error ? err.message : String(err) },
-      { status: 500 },
-    );
-  }
+		return c.json({ ok: true, message: "Vault updated" }, { status: 200 });
+	} catch (err) {
+		console.error("Failed to update vault:", err);
+		return c.json(
+			{ error: "Failed to store vault", message: err instanceof Error ? err.message : String(err) },
+			{ status: 500 },
+		);
+	}
 });
 
 /**
@@ -229,47 +241,47 @@ app.put('/ai.json.enc', async (c) => {
  * Authentication is performed by decrypting the vault with the Bearer token
  * provided in the Authorization header. Only a correct token (i.e. the original
  * encryption password) will result in a successful decryption.
- * 
+ *
  * It can be used for example in a bash script like this:
- * 
+ *
  * ```bash
  * AI_JSON_CRYPTOKEN=04……9 curl -H "Authorization: Bearer $AI_JSON_CRYPTOKEN" "https://ai-proxy.inet.pp.ua/ai.json" | jq .
  * ```
  */
-app.get('/ai.json', async (c) => {
-  const authHeader = c.req.header('Authorization');
-  const token = extractBearerToken(authHeader || null);
+app.get("/ai.json", async (c) => {
+	const authHeader = c.req.header("Authorization");
+	const token = extractBearerToken(authHeader || null);
 
-  if (!token) {
-    return c.json({ error: 'Missing Authorization header' }, { status: 401 });
-  }
+	if (!token) {
+		return c.json({ error: "Missing Authorization header" }, { status: 401 });
+	}
 
-  try {
-    const encrypted = await c.env.KV_AI_PROXY.get(AI_JSON_ENC_KV_KEY);
-    if (!encrypted) {
-      return c.json({ error: 'Vault not found' }, { status: 404 });
-    }
+	try {
+		const encrypted = await c.env.KV_AI_PROXY.get(AI_JSON_ENC_KV_KEY);
+		if (!encrypted) {
+			return c.json({ error: "Vault not found" }, { status: 404 });
+		}
 
-    const decrypted = await decryptAiConfig(encrypted, token);
-    return c.json(decrypted);
-  } catch (err) {
-    // Decryption failure (wrong password, format error, etc.)
-    console.error('Failed to decrypt vault for GET /ai.json:', err);
-    return c.json(
-      {
-        error: 'Decryption failed',
-        message: 'The provided token does not match the encryption password, or the vault is corrupted.',
-      },
-      { status: 403 },
-    );
-  }
+		const decrypted = await decryptAiConfig(encrypted, token);
+		return c.json(decrypted);
+	} catch (err) {
+		// Decryption failure (wrong password, format error, etc.)
+		console.error("Failed to decrypt vault for GET /ai.json:", err);
+		return c.json(
+			{
+				error: "Decryption failed",
+				message: "The provided token does not match the encryption password, or the vault is corrupted.",
+			},
+			{ status: 403 },
+		);
+	}
 });
 
 /**
  * Health check.
  */
-app.get('/', (c) => {
-  return c.json({ status: 'ok', service: 'ai-proxy-cloudflare' });
+app.get("/", (c) => {
+	return c.json({ status: "ok", service: "ai-proxy-cloudflare" });
 });
 
 /**
@@ -278,34 +290,34 @@ app.get('/', (c) => {
  * Lists all providers that have at least one non-expired API key.
  * Requires a valid user Bearer token.
  */
-app.get('/v1/providers', async (c) => {
-  const env = c.env;
+app.get("/v1/providers", async (c) => {
+	const env = c.env;
 
-  const rateLimitResponse = await checkRateLimit(c.req.raw, env);
-  if (rateLimitResponse) return rateLimitResponse;
+	const rateLimitResponse = await checkRateLimit(c.req.raw, env);
+	if (rateLimitResponse) return rateLimitResponse;
 
-  const bearerToken = extractBearerToken(c.req.header('Authorization') || null);
-  if (!bearerToken) {
-    return c.json({ error: 'Missing Authorization header' }, { status: 401 });
-  }
+	const bearerToken = extractBearerToken(c.req.header("Authorization") || null);
+	if (!bearerToken) {
+		return c.json({ error: "Missing Authorization header" }, { status: 401 });
+	}
 
-  const username = await validateUserKey(env.KV_AI_PROXY, bearerToken);
-  if (!username) {
-    return c.json({ error: 'Invalid API key' }, { status: 403 });
-  }
+	const username = await validateUserKey(env.KV_AI_PROXY, bearerToken);
+	if (!username) {
+		return c.json({ error: "Invalid API key" }, { status: 403 });
+	}
 
-  let config: AiConfig;
-  try {
-    config = await getAiConfig(env);
-  } catch {
-    return c.json({ error: 'Configuration unavailable' }, { status: 500 });
-  }
+	let config: AiConfig;
+	try {
+		config = await getAiConfig(env);
+	} catch {
+		return c.json({ error: "Configuration unavailable" }, { status: 500 });
+	}
 
-  const providers = Object.entries(config.providers)
-    .filter(([, provider]) => provider.keys.some((k) => k.type !== 'expired'))
-    .map(([id, provider]) => ({ id, object: 'provider', protocol: provider.protocol }));
+	const providers = Object.entries(config.providers)
+		.filter(([, provider]) => provider.keys.some((k) => k.type !== "expired"))
+		.map(([id, provider]) => ({ id, object: "provider", protocol: provider.protocol }));
 
-  return c.json({ object: 'list', data: providers });
+	return c.json({ object: "list", data: providers });
 });
 
 /**
@@ -314,47 +326,47 @@ app.get('/v1/providers', async (c) => {
  * Lists all models available for the given provider, in OpenAI-compatible format.
  * Requires a valid user Bearer token.
  */
-app.get('/:provider/v1/models', async (c) => {
-  const env = c.env;
-  const providerKey = c.req.param('provider');
+app.get("/:provider/v1/models", async (c) => {
+	const env = c.env;
+	const providerKey = c.req.param("provider");
 
-  const rateLimitResponse = await checkRateLimit(c.req.raw, env);
-  if (rateLimitResponse) return rateLimitResponse;
+	const rateLimitResponse = await checkRateLimit(c.req.raw, env);
+	if (rateLimitResponse) return rateLimitResponse;
 
-  const bearerToken = extractBearerToken(c.req.header('Authorization') || null);
-  if (!bearerToken) {
-    return c.json({ error: 'Missing Authorization header' }, { status: 401 });
-  }
+	const bearerToken = extractBearerToken(c.req.header("Authorization") || null);
+	if (!bearerToken) {
+		return c.json({ error: "Missing Authorization header" }, { status: 401 });
+	}
 
-  const username = await validateUserKey(env.KV_AI_PROXY, bearerToken);
-  if (!username) {
-    return c.json({ error: 'Invalid API key' }, { status: 403 });
-  }
+	const username = await validateUserKey(env.KV_AI_PROXY, bearerToken);
+	if (!username) {
+		return c.json({ error: "Invalid API key" }, { status: 403 });
+	}
 
-  let config: AiConfig;
-  try {
-    config = await getAiConfig(env);
-  } catch {
-    return c.json({ error: 'Configuration unavailable' }, { status: 500 });
-  }
+	let config: AiConfig;
+	try {
+		config = await getAiConfig(env);
+	} catch {
+		return c.json({ error: "Configuration unavailable" }, { status: 500 });
+	}
 
-  const provider = config.providers[providerKey];
-  if (!provider) {
-    return c.json({ error: `Provider '${providerKey}' not found` }, { status: 404 });
-  }
+	const provider = config.providers[providerKey];
+	if (!provider) {
+		return c.json({ error: `Provider '${providerKey}' not found` }, { status: 404 });
+	}
 
-  return c.json({
-    object: 'list',
-    data: provider.models.map((model) => ({
-      id: model.id,
-      object: 'model',
-      created: 0,
-      owned_by: providerKey,
-      context_window: model.contextWindow,
-      context_length: model.contextWindow,
-      max_completion_tokens: model.maxOutputTokens,
-    })),
-  });
+	return c.json({
+		object: "list",
+		data: provider.models.map((model) => ({
+			id: model.id,
+			object: "model",
+			created: 0,
+			owned_by: providerKey,
+			context_window: model.contextWindow,
+			context_length: model.contextWindow,
+			max_completion_tokens: model.maxOutputTokens,
+		})),
+	});
 });
 
 /**
@@ -363,50 +375,192 @@ app.get('/:provider/v1/models', async (c) => {
  * Returns metadata for a specific model, in OpenAI-compatible format.
  * Requires a valid user Bearer token.
  */
-app.get('/:provider/v1/models/:modelId', async (c) => {
-  const env = c.env;
-  const providerKey = c.req.param('provider');
-  const modelId = c.req.param('modelId');
+app.get("/:provider/v1/models/:modelId", async (c) => {
+	const env = c.env;
+	const providerKey = c.req.param("provider");
+	const modelId = c.req.param("modelId");
 
-  const rateLimitResponse = await checkRateLimit(c.req.raw, env);
-  if (rateLimitResponse) return rateLimitResponse;
+	const rateLimitResponse = await checkRateLimit(c.req.raw, env);
+	if (rateLimitResponse) return rateLimitResponse;
 
-  const bearerToken = extractBearerToken(c.req.header('Authorization') || null);
-  if (!bearerToken) {
-    return c.json({ error: 'Missing Authorization header' }, { status: 401 });
-  }
+	const bearerToken = extractBearerToken(c.req.header("Authorization") || null);
+	if (!bearerToken) {
+		return c.json({ error: "Missing Authorization header" }, { status: 401 });
+	}
 
-  const username = await validateUserKey(env.KV_AI_PROXY, bearerToken);
-  if (!username) {
-    return c.json({ error: 'Invalid API key' }, { status: 403 });
-  }
+	const username = await validateUserKey(env.KV_AI_PROXY, bearerToken);
+	if (!username) {
+		return c.json({ error: "Invalid API key" }, { status: 403 });
+	}
 
-  let config: AiConfig;
-  try {
-    config = await getAiConfig(env);
-  } catch {
-    return c.json({ error: 'Configuration unavailable' }, { status: 500 });
-  }
+	let config: AiConfig;
+	try {
+		config = await getAiConfig(env);
+	} catch {
+		return c.json({ error: "Configuration unavailable" }, { status: 500 });
+	}
 
-  const provider = config.providers[providerKey];
-  if (!provider) {
-    return c.json({ error: `Provider '${providerKey}' not found` }, { status: 404 });
-  }
+	const provider = config.providers[providerKey];
+	if (!provider) {
+		return c.json({ error: `Provider '${providerKey}' not found` }, { status: 404 });
+	}
 
-  const model = provider.models.find((m) => m.id === modelId);
-  if (!model) {
-    return c.json({ error: `Model '${modelId}' not found for provider '${providerKey}'` }, { status: 404 });
-  }
+	const model = provider.models.find((m) => m.id === modelId);
+	if (!model) {
+		return c.json({ error: `Model '${modelId}' not found for provider '${providerKey}'` }, { status: 404 });
+	}
 
-  return c.json({
-    id: model.id,
-    object: 'model',
-    created: 0,
-    owned_by: providerKey,
-    context_window: model.contextWindow,
-    context_length: model.contextWindow,
-    max_completion_tokens: model.maxOutputTokens,
-  });
+	return c.json({
+		id: model.id,
+		object: "model",
+		created: 0,
+		owned_by: providerKey,
+		context_window: model.contextWindow,
+		context_length: model.contextWindow,
+		max_completion_tokens: model.maxOutputTokens,
+	});
+});
+
+// ── Keypool Usage Endpoints ─────────────────────────────────────────
+
+/**
+ * POST /v1/keypool/usage
+ *
+ * Record a successful API key usage event.
+ * Requires a valid user Bearer token.
+ */
+app.post("/v1/keypool/usage", async (c) => {
+	const env = c.env;
+	const authHeader = c.req.header("Authorization") ?? null;
+	const userId = getUserIdFromAuth(authHeader);
+
+	if (!userId) {
+		return c.json({ error: "Missing Authorization header" }, { status: 401 });
+	}
+
+	let entry: KeyUsageEntry;
+	try {
+		entry = await c.req.json();
+	} catch {
+		return c.json({ error: "Invalid JSON payload" }, { status: 400 });
+	}
+
+	// Validate required fields
+	if (!entry.provider || !entry.modelId || !entry.keyOwner || !entry.keyHint) {
+		return c.json({ error: "Missing required fields: provider, modelId, keyOwner, keyHint" }, { status: 400 });
+	}
+
+	await recordUsage(env.KV_AI_PROXY, userId, entry);
+	return c.json({ ok: true }, { status: 200 });
+});
+
+/**
+ * POST /v1/keypool/error
+ *
+ * Record a failed API key request.
+ * Requires a valid user Bearer token.
+ */
+app.post("/v1/keypool/error", async (c) => {
+	const env = c.env;
+	const authHeader = c.req.header("Authorization") ?? null;
+	const userId = getUserIdFromAuth(authHeader);
+
+	if (!userId) {
+		return c.json({ error: "Missing Authorization header" }, { status: 401 });
+	}
+
+	let entry: KeyErrorEntry;
+	try {
+		entry = await c.req.json();
+	} catch {
+		return c.json({ error: "Invalid JSON payload" }, { status: 400 });
+	}
+
+	// Validate required fields
+	if (!entry.provider || !entry.modelId || !entry.keyOwner || !entry.keyHint) {
+		return c.json({ error: "Missing required fields: provider, modelId, keyOwner, keyHint" }, { status: 400 });
+	}
+
+	await recordError(env.KV_AI_PROXY, userId, entry);
+	return c.json({ ok: true }, { status: 200 });
+});
+
+/**
+ * GET /v1/keypool/stats
+ *
+ * Get usage statistics grouped by period.
+ * Query params: period (hour|day|week|month, default: day)
+ * Requires a valid user Bearer token.
+ */
+app.get("/v1/keypool/stats", async (c) => {
+	const env = c.env;
+	const authHeader = c.req.header("Authorization") ?? null;
+	const userId = getUserIdFromAuth(authHeader);
+
+	if (!userId) {
+		return c.json({ error: "Missing Authorization header" }, { status: 401 });
+	}
+
+	const period = (c.req.query("period") as UsagePeriod) || "day";
+	const stats = await getUsageStats(env.KV_AI_PROXY, userId, period);
+	return c.json({ object: "list", data: stats });
+});
+
+/**
+ * GET /v1/keypool/errors
+ *
+ * Get error statistics.
+ * Requires a valid user Bearer token.
+ */
+app.get("/v1/keypool/errors", async (c) => {
+	const env = c.env;
+	const authHeader = c.req.header("Authorization") ?? null;
+	const userId = getUserIdFromAuth(authHeader);
+
+	if (!userId) {
+		return c.json({ error: "Missing Authorization header" }, { status: 401 });
+	}
+
+	const stats = await getErrorStats(env.KV_AI_PROXY, userId);
+	return c.json({ object: "list", data: stats });
+});
+
+/**
+ * POST /v1/keypool/purge
+ *
+ * Delete all usage and error records for the authenticated user.
+ * Requires a valid user Bearer token.
+ */
+app.post("/v1/keypool/purge", async (c) => {
+	const env = c.env;
+	const authHeader = c.req.header("Authorization") ?? null;
+	const userId = getUserIdFromAuth(authHeader);
+
+	if (!userId) {
+		return c.json({ error: "Missing Authorization header" }, { status: 401 });
+	}
+
+	const freed = await purge(env.KV_AI_PROXY, userId);
+	return c.json({ ok: true, freedBytes: freed });
+});
+
+/**
+ * GET /v1/keypool/size
+ *
+ * Get the total size of usage/error records for the authenticated user.
+ * Requires a valid user Bearer token.
+ */
+app.get("/v1/keypool/size", async (c) => {
+	const env = c.env;
+	const authHeader = c.req.header("Authorization") ?? null;
+	const userId = getUserIdFromAuth(authHeader);
+
+	if (!userId) {
+		return c.json({ error: "Missing Authorization header" }, { status: 401 });
+	}
+
+	const size = await getFileSizeBytes(env.KV_AI_PROXY, userId);
+	return c.json({ sizeBytes: size });
 });
 
 /**
@@ -418,161 +572,161 @@ app.get('/:provider/v1/models/:modelId', async (c) => {
  *   - /sambanova/v1/chat/completions (new)
  *   - etc.
  */
-app.post('*', async (c) => {
-  const env = c.env;
+app.post("*", async (c) => {
+	const env = c.env;
 
-  // Check rate limit
-  const rateLimitResponse = await checkRateLimit(c.req.raw, env);
-  if (rateLimitResponse) return rateLimitResponse;
+	// Check rate limit
+	const rateLimitResponse = await checkRateLimit(c.req.raw, env);
+	if (rateLimitResponse) return rateLimitResponse;
 
-  try {
-    // Extract and validate authentication
-    const authHeader = c.req.header('Authorization');
-    const bearerToken = extractBearerToken(authHeader || null);
+	try {
+		// Extract and validate authentication
+		const authHeader = c.req.header("Authorization");
+		const bearerToken = extractBearerToken(authHeader || null);
 
-    if (!bearerToken) {
-      return c.json(
-        { error: 'Missing Authorization header' },
-        { status: 401 },
-      );
-    }
+		if (!bearerToken) {
+			return c.json(
+				{ error: "Missing Authorization header" },
+				{ status: 401 },
+			);
+		}
 
-    // Validate user key
-    const username = await validateUserKey(env.KV_AI_PROXY, bearerToken);
-    if (!username) {
-      return c.json(
-        { error: 'Invalid API key' },
-        { status: 403 },
-      );
-    }
+		// Validate user key
+		const username = await validateUserKey(env.KV_AI_PROXY, bearerToken);
+		if (!username) {
+			return c.json(
+				{ error: "Invalid API key" },
+				{ status: 403 },
+			);
+		}
 
-    if (env.DEBUG) {
-      console.log(`User [${username}] validated`);
-    }
+		if (env.DEBUG) {
+			console.log(`User [${username}] validated`);
+		}
 
-    // Enforce AI token balance if Fufuni integration is configured.
-    // When FUFUNI_MERCHANT_URL is unset, balance check is skipped (standalone mode).
-    const balance = await checkBalance(bearerToken, env);
-    if (balance !== null && balance <= 0) {
-      return c.json(
-        { error: 'Insufficient AI token balance. Purchase more tokens at the store.' },
-        { status: 402 },
-      );
-    }
+		// Enforce AI token balance if Fufuni integration is configured.
+		// When FUFUNI_MERCHANT_URL is unset, balance check is skipped (standalone mode).
+		const balance = await checkBalance(bearerToken, env);
+		if (balance !== null && balance <= 0) {
+			return c.json(
+				{ error: "Insufficient AI token balance. Purchase more tokens at the store." },
+				{ status: 402 },
+			);
+		}
 
-    // Load AI configuration (vault from KV, decrypted with env.AI_JSON_CRYPTOKEN)
-    const config = await getAiConfig(env);
+		// Load AI configuration (vault from KV, decrypted with env.AI_JSON_CRYPTOKEN)
+		const config = await getAiConfig(env);
 
-    // Parse request body
-    let payload: any;
-    try {
-      payload = await c.req.json();
-    } catch (err) {
-      return c.json(
-        { error: 'Invalid JSON payload' },
-        { status: 400 },
-      );
-    }
+		// Parse request body
+		let payload: any;
+		try {
+			payload = await c.req.json();
+		} catch (err) {
+			return c.json(
+				{ error: "Invalid JSON payload" },
+				{ status: 400 },
+			);
+		}
 
-    // Detect provider from path or X-Host-Final header
-    const pathname = new URL(c.req.url).pathname;
-    const xHostFinal = c.req.header('X-Host-Final');
-    const detected = detectProvider(pathname, xHostFinal || null, config);
+		// Detect provider from path or X-Host-Final header
+		const pathname = new URL(c.req.url).pathname;
+		const xHostFinal = c.req.header("X-Host-Final");
+		const detected = detectProvider(pathname, xHostFinal || null, config);
 
-    if (!detected) {
-      return c.json(
-        {
-          error: 'Unable to determine provider. ' +
-                 'Use path prefix (/groq/, /sambanova/, /anthropic/, /openai/) ' +
-                 'or X-Host-Final header for legacy routes.',
-        },
-        { status: 400 },
-      );
-    }
+		if (!detected) {
+			return c.json(
+				{
+					error: "Unable to determine provider. " +
+						   "Use path prefix (/groq/, /sambanova/, /anthropic/, /openai/) " +
+						   "or X-Host-Final header for legacy routes.",
+				},
+				{ status: 400 },
+			);
+		}
 
-    const { key: providerKey, provider } = detected;
+		const { key: providerKey, provider } = detected;
 
-    if (env.DEBUG) {
-      console.log(`Provider detected: ${providerKey}`);
-    }
+		if (env.DEBUG) {
+			console.log(`Provider detected: ${providerKey}`);
+		}
 
-    // Validate payload structure
-    if (!payload.model) {
-      return c.json(
-        { error: 'Missing model' },
-        { status: 400 },
-      );
-    }
+		// Validate payload structure
+		if (!payload.model) {
+			return c.json(
+				{ error: "Missing model" },
+				{ status: 400 },
+			);
+		}
 
-    const selectedModel = findProviderModel(provider, String(payload.model));
-    if (!selectedModel) {
-      return c.json(
-        { error: `Model '${String(payload.model)}' not found for provider '${providerKey}'` },
-        { status: 404 },
-      );
-    }
+		const selectedModel = findProviderModel(provider, String(payload.model));
+		if (!selectedModel) {
+			return c.json(
+				{ error: `Model '${String(payload.model)}' not found for provider '${providerKey}'` },
+				{ status: 404 },
+			);
+		}
 
-    const modelUsage = selectedModel.usage ?? 'chat';
+		const modelUsage = selectedModel.usage ?? "chat";
 
-    if (modelUsage === 'chat') {
-      if (!payload.messages || !Array.isArray(payload.messages)) {
-        return c.json(
-          { error: 'Missing or invalid messages array' },
-          { status: 400 },
-        );
-      }
-    } else if (modelUsage === 'tts') {
-      if (typeof payload.input !== 'string' || payload.input.trim().length === 0) {
-        return c.json(
-          { error: 'Missing or invalid input for text-to-speech request' },
-          { status: 400 },
-        );
-      }
-    } else {
-      return c.json(
-        { error: `Model usage '${modelUsage}' is not yet supported on this proxy route` },
-        { status: 400 },
-      );
-    }
+		if (modelUsage === "chat") {
+			if (!payload.messages || !Array.isArray(payload.messages)) {
+				return c.json(
+					{ error: "Missing or invalid messages array" },
+					{ status: 400 },
+				);
+			}
+		} else if (modelUsage === "tts") {
+			if (typeof payload.input !== "string" || payload.input.trim().length === 0) {
+				return c.json(
+					{ error: "Missing or invalid input for text-to-speech request" },
+					{ status: 400 },
+				);
+			}
+		} else {
+			return c.json(
+				{ error: `Model usage '${modelUsage}' is not yet supported on this proxy route` },
+				{ status: 400 },
+			);
+		}
 
-    // Forward to Cloudflare AI Gateway
-    const response = await forwardToCfAiGateway(c.req.raw, payload, provider, {
-      accountId: env.CLOUDFLARE_ACCOUNT_ID,
-      aigToken: env.CLOUDFLARE_AIG_TOKEN,
-      providerKey,
-      modelUsage,
-      debug: env.DEBUG === 'true',
-    });
+		// Forward to Cloudflare AI Gateway
+		const response = await forwardToCfAiGateway(c.req.raw, payload, provider, {
+			accountId: env.CLOUDFLARE_ACCOUNT_ID,
+			aigToken: env.CLOUDFLARE_AIG_TOKEN,
+			providerKey,
+			modelUsage,
+			debug: env.DEBUG === "true",
+		});
 
-    // Deduct 1 token unit from balance after successful request (non-blocking).
-    if (response.status < 400 && balance !== null) {
-      c.executionCtx.waitUntil(deductBalance(bearerToken, 1, env));
-    }
+		// Deduct 1 token unit from balance after successful request (non-blocking).
+		if (response.status < 400 && balance !== null) {
+			c.executionCtx.waitUntil(deductBalance(bearerToken, 1, env));
+		}
 
-    return response;
-  } catch (err) {
-    console.error('Proxy error:', err);
-    return c.json(
-      {
-        error: 'Internal server error',
-        message: err instanceof Error ? err.message : 'Unknown error',
-      },
-      { status: 500 },
-    );
-  }
+		return response;
+	} catch (err) {
+		console.error("Proxy error:", err);
+		return c.json(
+			{
+				error: "Internal server error",
+				message: err instanceof Error ? err.message : "Unknown error",
+			},
+			{ status: 500 },
+		);
+	}
 });
 
 /**
  * 404 handler for unsupported paths/methods.
  */
-app.all('*', (c) => {
-  return c.json(
-    {
-      error: 'Not found',
-      hint: 'POST to /v1/chat/completions, /groq/v1/chat/completions, etc.',
-    },
-    { status: 404 },
-  );
+app.all("*", (c) => {
+	return c.json(
+		{
+			error: "Not found",
+			hint: "POST to /v1/chat/completions, /groq/v1/chat/completions, etc.",
+		},
+		{ status: 404 },
+	);
 });
 
 export default app;
