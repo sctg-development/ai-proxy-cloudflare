@@ -533,6 +533,12 @@ app.get("/v1/keypool/errors", async (c) => {
  * Migrate a usage NDJSON file into KV for the authenticated user.
  * Existing KV records are skipped and counted as duplicates.
  * Requires a valid user Bearer token.
+ * ```bash
+ * curl -X POST "https://your-worker-url/v1/keypool/migrate/usage" \
+ *      -H "Authorization: Bearer <	user-token>" \
+ *      -H "Content-Type: application/x-ndjson" \
+ *      --data-binary "@usage.ndjson"
+ * ```
  */
 app.post("/v1/keypool/migrate/usage", async (c) => {
 	const env = c.env;
@@ -564,6 +570,12 @@ app.post("/v1/keypool/migrate/usage", async (c) => {
  * Migrate an error NDJSON file into KV for the authenticated user.
  * Existing KV records are skipped and counted as duplicates.
  * Requires a valid user Bearer token.
+ * ```bash
+ * curl -X POST "https://your-worker-url/v1/keypool/migrate/errors" \
+ * 	    -H "Authorization: Bearer <user-token>" \
+ * 	    -H "Content-Type: application/x-ndjson" \
+ * 	    --data-binary "@errors.ndjson"
+ * ```
  */
 app.post("/v1/keypool/migrate/errors", async (c) => {
 	const env = c.env;
