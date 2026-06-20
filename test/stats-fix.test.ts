@@ -47,11 +47,8 @@ describe("getUsageStats bug fix", () => {
         }
       ]);
 
-    // Mock the list method to return our test key
-    mockKV.list.mockResolvedValue({
-      keys: [{ name: testKey }],
-      list_complete: true
-    });
+    // Don't mock list directly - let it use the real mock implementation
+    // that reads from mockData
 
     // Call getUsageStats with period=month
     const result = await getUsageStats(mockKV, userId, "month");
@@ -105,11 +102,8 @@ describe("getUsageStats bug fix", () => {
       }
     ]);
 
-    // Mock the list method to return our test keys
-    mockKV.list.mockResolvedValue({
-      keys: [{ name: testKey1 }, { name: testKey2 }],
-      list_complete: true
-    });
+    // Don't mock list directly - let it use the real mock implementation
+    // that reads from mockData
 
     // Call getUsageStats with period=month
     const result = await getUsageStats(mockKV, userId, "month");

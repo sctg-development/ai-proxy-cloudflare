@@ -6,7 +6,7 @@
   "author": "Ronan LE MEILLAT",
   "license": "AGPL-3.0-or-later",
   "scripts": {
-    "dev": "wrangler dev --port 8787",
+    "dev": "wrangler dev --port 8787 --inspector-port 9230",
     "deploy": "wrangler deploy",
     "build": "wrangler deploy --dry-run",
     "test": "vitest",

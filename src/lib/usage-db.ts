@@ -197,7 +197,7 @@ const ERRORS_KEY_PREFIX = "errors";
  * Maximum number of records to return in a single stats query.
  * Free tier KV can handle this without issues.
  */
-const MAX_RECORDS_PER_QUERY = 10000;
+const MAX_RECORDS_PER_QUERY = 1000;
 
 /**
  * Get the user ID from the Authorization header.
@@ -619,7 +619,7 @@ export async function getUsageStats(
 	const cutoff = periodCutoffMs(period);
 	const map = new Map<string, KeyUsageStat>();
 
-	try {
+		try {
 		// List all usage keys for this user (new format: usage:{userId}:YYYY-MM-DDTHH:00)
 		const listResult = await kv.list({
 			prefix: `usage:${userId}:`,
@@ -629,12 +629,13 @@ export async function getUsageStats(
 			// Process each hour bucket
 			for (const kvKey of listResult.keys) {
 				// Parse period from key: usage:{userId}:YYYY-MM-DDTHH:00
-				const keyParts = kvKey.name.split(":");
-				if (keyParts.length < 4) continue;
+				// Use regex to extract the period part after the second colon
+				// The period format is YYYY-MM-DDTHH:00, so it contains one colon in the time part
+				const match = kvKey.name.match(/^usage:([^:]+):([\d]{4}-[\d]{2}-[\d]{2}T[\d]{2}:00)$/);
+				if (!match) continue;
 
-				// Reconstruct the full period: YYYY-MM-DDTHH:00
-				// keyParts[2] contains YYYY-MM-DDTHH, keyParts[3] contains 00
-				const recordPeriod = `${keyParts[2]}:${keyParts[3]}`;
+				// match[2] contains the full period: YYYY-MM-DDTHH:00
+				const recordPeriod = match[2];
 				const recordDate = parseHourBucket(recordPeriod);
 				if (recordDate < cutoff) continue;
 
@@ -735,11 +736,13 @@ export async function getErrorStats(
 
 		for (const kvKey of usageList.keys) {
 			// Parse period from key: usage:{userId}:YYYY-MM-DDTHH:00
-			const keyParts = kvKey.name.split(":");
-			if (keyParts.length < 4) continue;
+			// Use regex to extract the period part after the second colon
+			// The period format is YYYY-MM-DDTHH:00, so it contains one colon in the time part
+			const match = kvKey.name.match(/^usage:([^:]+):([\d]{4}-[\d]{2}-[\d]{2}T[\d]{2}:00)$/);
+			if (!match) continue;
 
-			// Reconstruct the full period: YYYY-MM-DDTHH:00
-			const recordPeriod = `${keyParts[2]}:${keyParts[3]}`;
+			// match[2] contains the full period: YYYY-MM-DDTHH:00
+			const recordPeriod = match[2];
 			const recordDate = parseHourBucket(recordPeriod);
 			const cutoff = periodCutoffMs("month"); // Use month cutoff for consistency
 

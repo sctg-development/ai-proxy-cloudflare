@@ -426,6 +426,32 @@ app.get("/:provider/v1/models/:modelId", async (c) => {
 // ── Keypool Usage Endpoints ─────────────────────────────────────────
 
 /**
+ * Authenticate with decryption token for /v1/keypool/* endpoints.
+ * /v1/keypool/* endpoints use the vault decryption token for authentication, not the user API keys.
+ * This function checks if the provided Bearer decrypts the vault successfully.
+ * 
+ * @param token - The Bearer token extracted from the Authorization header	
+ * @returns true if the token matches the vault decryption token, false otherwise
+ */
+export async function isKeypoolAuthValid(c: any, token: string | null, env: Env): Promise<boolean> {
+	try {
+		if (!token) return false;
+		const encrypted = await c.env.KV_AI_PROXY.get(AI_JSON_ENC_KV_KEY);
+		if (!encrypted) return false;
+		// Attempt to decrypt with the provided token
+		const decrypted = await decryptAiConfig(encrypted, token);
+		// check if the decrypted config is valid (has providers)
+		if (!decrypted || !decrypted.providers || Object.keys(decrypted.providers).length === 0) {
+			return false;
+		}
+		return true; // Decryption succeeded
+	} catch (error: any) {
+		console.error("Error validating keypool authorization:", error);
+		return false; // Decryption failed
+	}
+}
+
+/**
  * POST /v1/keypool/usage
  *
  * Record a successful API key usage event.
@@ -438,6 +464,10 @@ app.post("/v1/keypool/usage", async (c) => {
 
 	if (!userId) {
 		return c.json({ error: "Missing Authorization header" }, { status: 401 });
+	}
+
+	if (!isKeypoolAuthValid(c, extractBearerToken(authHeader), env)) {
+		return c.json({ error: "Invalid keypool authorization" }, { status: 403 });
 	}
 
 	let entry: KeyUsageEntry;
@@ -469,6 +499,10 @@ app.post("/v1/keypool/error", async (c) => {
 
 	if (!userId) {
 		return c.json({ error: "Missing Authorization header" }, { status: 401 });
+	}
+
+	if (!isKeypoolAuthValid(c, extractBearerToken(authHeader), env)) {
+		return c.json({ error: "Invalid keypool authorization" }, { status: 403 });
 	}
 
 	let entry: KeyErrorEntry;
@@ -508,6 +542,10 @@ app.get("/v1/keypool/stats", async (c) => {
 		return c.json({ error: "Missing Authorization header" }, { status: 401 });
 	}
 
+	if (!isKeypoolAuthValid(c, extractBearerToken(authHeader), env)) {
+		return c.json({ error: "Invalid keypool authorization" }, { status: 403 });
+	}
+
 	const period = (c.req.query("period") as UsagePeriod) || "day";
 	const stats = await getUsageStats(env.KV_AI_PROXY, userId, period);
 	return c.json({ object: "list", data: stats });
@@ -526,6 +564,10 @@ app.get("/v1/keypool/errors", async (c) => {
 
 	if (!userId) {
 		return c.json({ error: "Missing Authorization header" }, { status: 401 });
+	}
+
+	if (!isKeypoolAuthValid(c, extractBearerToken(authHeader), env)) {
+		return c.json({ error: "Invalid keypool authorization" }, { status: 403 });
 	}
 
 	const stats = await getErrorStats(env.KV_AI_PROXY, userId);
@@ -555,6 +597,10 @@ app.post("/v1/keypool/migrate/usage", async (c) => {
 		return c.json({ error: "Missing Authorization header" }, { status: 401 });
 	}
 
+	if (!isKeypoolAuthValid(c, extractBearerToken(authHeader), env)) {
+		return c.json({ error: "Invalid keypool authorization" }, { status: 403 });
+	}
+
 	let body: string;
 	try {
 		body = await c.req.text();
@@ -575,18 +621,18 @@ app.post("/v1/keypool/migrate/usage", async (c) => {
 	const end = endline ? parseInt(endline) : undefined;
 
 	// Validate parameters
-	if ((start === undefined) || (end === undefined)) {
-		return c.json({ error: "Missing required query parameters: startline, endline" }, { status: 400 });
-	} 
-	if ((startline && isNaN(start)) || (endline && isNaN(end))) {
-			return c.json({ error: "startline and endline must be valid numbers" }, { status: 400 });
-		}	
+	if (startline && (start === undefined || isNaN(start))) {
+		return c.json({ error: "startline must be a valid number" }, { status: 400 });
+	}
+	if (endline && (end === undefined || isNaN(end))) {
+		return c.json({ error: "endline must be a valid number" }, { status: 400 });
+	}
 
 	if (start !== undefined && end !== undefined && start > end) {
 		return c.json({ error: "startline must be less than or equal to endline" }, { status: 400 });
 	}
 
-	const result = await migrateUsageNdjson(env.KV_AI_PROXY, userId, body, start as number | undefined, end as number | undefined);
+	const result = await migrateUsageNdjson(env.KV_AI_PROXY, userId, body, start, end);
 	return c.json({ ok: true, inserted: result.inserted, duplicates: result.duplicates });
 });
 
@@ -613,6 +659,10 @@ app.post("/v1/keypool/migrate/errors", async (c) => {
 		return c.json({ error: "Missing Authorization header" }, { status: 401 });
 	}
 
+	if (!isKeypoolAuthValid(c, extractBearerToken(authHeader), env)) {
+		return c.json({ error: "Invalid keypool authorization" }, { status: 403 });
+	}
+
 	let body: string;
 	try {
 		body = await c.req.text();
@@ -633,18 +683,18 @@ app.post("/v1/keypool/migrate/errors", async (c) => {
 	const end = endline ? parseInt(endline) : undefined;
 
 	// Validate parameters
-	if ((start === undefined) || (end === undefined)) {
-		return c.json({ error: "Missing required query parameters: startline, endline" }, { status: 400 });
+	if (startline && (start === undefined || isNaN(start))) {
+		return c.json({ error: "startline must be a valid number" }, { status: 400 });
 	}
-	if ((startline && isNaN(start)) || (endline && isNaN(end))) {
-		return c.json({ error: "startline and endline must be valid numbers" }, { status: 400 });
+	if (endline && (end === undefined || isNaN(end))) {
+		return c.json({ error: "endline must be a valid number" }, { status: 400 });
 	}
 
 	if (start !== undefined && end !== undefined && start > end) {
 		return c.json({ error: "startline must be less than or equal to endline" }, { status: 400 });
 	}
 
-	const result = await migrateErrorNdjson(env.KV_AI_PROXY, userId, body, start as number | undefined, end as number | undefined);
+	const result = await migrateErrorNdjson(env.KV_AI_PROXY, userId, body, start, end);
 	return c.json({ ok: true, inserted: result.inserted, duplicates: result.duplicates });
 });
 
@@ -653,6 +703,11 @@ app.post("/v1/keypool/migrate/errors", async (c) => {
  *
  * Delete all usage and error records for the authenticated user.
  * Requires a valid user Bearer token.
+ * 
+ * ```markdown
+ * curl -X POST "https://your-worker-url/v1/keypool/purge" \
+ *      -H "Authorization: Bearer <user-token>"
+ * ```
  */
 app.post("/v1/keypool/purge", async (c) => {
 	const env = c.env;
@@ -662,8 +717,12 @@ app.post("/v1/keypool/purge", async (c) => {
 	if (!userId) {
 		return c.json({ error: "Missing Authorization header" }, { status: 401 });
 	}
+	
+	if (!isKeypoolAuthValid(c, extractBearerToken(authHeader), env)) {
+		return c.json({ error: "Invalid keypool authorization" }, { status: 403 });
+	}
 
-	const freed = await purge(env.KV_AI_PROXY, userId);
+	const freed = await purge(c.env.KV_AI_PROXY, userId);
 	return c.json({ ok: true, freedBytes: freed });
 });
 
@@ -680,6 +739,10 @@ app.get("/v1/keypool/size", async (c) => {
 
 	if (!userId) {
 		return c.json({ error: "Missing Authorization header" }, { status: 401 });
+	}
+	
+	if (!isKeypoolAuthValid(c, extractBearerToken(authHeader), env)) {
+		return c.json({ error: "Invalid keypool authorization" }, { status: 403 });
 	}
 
 	const size = await getFileSizeBytes(env.KV_AI_PROXY, userId);
@@ -760,8 +823,8 @@ app.post("*", async (c) => {
 			return c.json(
 				{
 					error: "Unable to determine provider. " +
-						   "Use path prefix (/groq/, /sambanova/, /anthropic/, /openai/) " +
-						   "or X-Host-Final header for legacy routes.",
+						"Use path prefix (/groq/, /sambanova/, /anthropic/, /openai/) " +
+						"or X-Host-Final header for legacy routes.",
 				},
 				{ status: 400 },
 			);
