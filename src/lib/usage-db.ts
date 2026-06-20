@@ -77,8 +77,11 @@ export interface KeyUsageStat {
  * Result returned when migrating usage NDJSON into KV.
  */
 export interface MigrateResult {
+	ok: boolean;
 	inserted: number;
 	duplicates: number;
+	"created-keys": number;
+	"updated-keys": number;
 }
 
 /**
@@ -424,6 +427,8 @@ export async function migrateUsageNdjson(
 
 	let inserted = 0;
 	let duplicates = 0;
+	let createdKeys = 0;
+	let updatedKeys = 0;
 
 	// Process each hour bucket with rate limiting
 	for (const [period, records] of hourlyRecords) {
@@ -456,6 +461,13 @@ export async function migrateUsageNdjson(
 			// Merge with new unique records
 			const updatedRecords = [...existingRecords, ...newUniqueRecords];
 
+			// Track key creation vs update
+			if (existingRecords.length === 0 && newUniqueRecords.length > 0) {
+				createdKeys += 1;
+			} else if (newUniqueRecords.length > 0) {
+				updatedKeys += 1;
+			}
+
 			// Write with retry mechanism
 			let attempts = 0;
 			const maxAttempts = 3;
@@ -486,7 +498,7 @@ export async function migrateUsageNdjson(
 		}
 	}
 
-	return { inserted, duplicates };
+	return { ok: true, inserted, duplicates, "created-keys": createdKeys, "updated-keys": updatedKeys };
 }
 
 /**
@@ -541,6 +553,8 @@ export async function migrateErrorNdjson(
 
 	let inserted = 0;
 	let duplicates = 0;
+	let createdKeys = 0;
+	let updatedKeys = 0;
 
 	// Process each hour bucket with rate limiting
 	for (const [period, records] of hourlyRecords) {
@@ -573,6 +587,13 @@ export async function migrateErrorNdjson(
 			// Merge with new unique records
 			const updatedRecords = [...existingRecords, ...newUniqueRecords];
 
+			// Track key creation vs update
+			if (existingRecords.length === 0 && newUniqueRecords.length > 0) {
+				createdKeys += 1;
+			} else if (newUniqueRecords.length > 0) {
+				updatedKeys += 1;
+			}
+
 			// Write with retry mechanism
 			let attempts = 0;
 			const maxAttempts = 3;
@@ -603,7 +624,7 @@ export async function migrateErrorNdjson(
 		}
 	}
 
-	return { inserted, duplicates };
+	return { ok: true, inserted, duplicates, "created-keys": createdKeys, "updated-keys": updatedKeys };
 }
 
 /**
@@ -619,25 +640,25 @@ export async function getUsageStats(
 	const cutoff = periodCutoffMs(period);
 	const map = new Map<string, KeyUsageStat>();
 
-		try {
+	try {
 		// List all usage keys for this user (new format: usage:{userId}:YYYY-MM-DDTHH:00)
 		const listResult = await kv.list({
 			prefix: `usage:${userId}:`,
 			limit: MAX_RECORDS_PER_QUERY,
 		});
 
-			// Process each hour bucket
-			for (const kvKey of listResult.keys) {
-				// Parse period from key: usage:{userId}:YYYY-MM-DDTHH:00
-				// Use regex to extract the period part after the second colon
-				// The period format is YYYY-MM-DDTHH:00, so it contains one colon in the time part
-				const match = kvKey.name.match(/^usage:([^:]+):([\d]{4}-[\d]{2}-[\d]{2}T[\d]{2}:00)$/);
-				if (!match) continue;
+		// Process each hour bucket
+		for (const kvKey of listResult.keys) {
+			// Parse period from key: usage:{userId}:YYYY-MM-DDTHH:00
+			// Use regex to extract the period part after the second colon
+			// The period format is YYYY-MM-DDTHH:00, so it contains one colon in the time part
+			const match = kvKey.name.match(/^usage:([^:]+):([\d]{4}-[\d]{2}-[\d]{2}T[\d]{2}:00)$/);
+			if (!match) continue;
 
-				// match[2] contains the full period: YYYY-MM-DDTHH:00
-				const recordPeriod = match[2];
-				const recordDate = parseHourBucket(recordPeriod);
-				if (recordDate < cutoff) continue;
+			// match[2] contains the full period: YYYY-MM-DDTHH:00
+			const recordPeriod = match[2];
+			const recordDate = parseHourBucket(recordPeriod);
+			if (recordDate < cutoff) continue;
 
 			// Get the array of raw records for this hour
 			const value = await kv.get(kvKey.name, "json");
@@ -727,7 +748,7 @@ export async function getErrorStats(
 	}>();
 	const usageMap = new Map<string, number>();
 
-		try {
+	try {
 		// Get usage counts from raw hourly records (new format: usage:{userId}:YYYY-MM-DDTHH:00)
 		const usageList = await kv.list({
 			prefix: `usage:${userId}:`,
