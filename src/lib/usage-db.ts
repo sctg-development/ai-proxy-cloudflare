@@ -170,7 +170,7 @@ function periodCutoffMs(period: UsagePeriod): number {
 	const now = Date.now();
 	switch (period) {
 		case "hour":
-			return now - 24 * 60 * 60 * 1000;
+			return now - 1 * 60 * 60 * 1000;
 		case "day":
 			return now - 24 * 60 * 60 * 1000;
 		case "week":
@@ -649,10 +649,9 @@ export async function getUsageStats(
 
 		// Process each hour bucket
 		for (const kvKey of listResult.keys) {
-			// Parse period from key: usage:{userId}:YYYY-MM-DDTHH:00
-			// Use regex to extract the period part after the second colon
-			// The period format is YYYY-MM-DDTHH:00, so it contains one colon in the time part
-			const match = kvKey.name.match(/^usage:([^:]+):([\d]{4}-[\d]{2}-[\d]{2}T[\d]{2}:00)$/);
+			// Parse period from key: usage:{userId}:YYYY-MM-DDTHH:00 (or usage:{userId}:YYYY-MM-DDTHH:00:provider:keyOwner:keyHint)
+			// The period format is YYYY-MM-DDTHH:00, so we extract it from the key
+			const match = kvKey.name.match(/^usage:([^:]+):([\d]{4}-[\d]{2}-[\d]{2}T[\d]{2}:00)/);
 			if (!match) continue;
 
 			// match[2] contains the full period: YYYY-MM-DDTHH:00
@@ -756,10 +755,9 @@ export async function getErrorStats(
 		});
 
 		for (const kvKey of usageList.keys) {
-			// Parse period from key: usage:{userId}:YYYY-MM-DDTHH:00
-			// Use regex to extract the period part after the second colon
-			// The period format is YYYY-MM-DDTHH:00, so it contains one colon in the time part
-			const match = kvKey.name.match(/^usage:([^:]+):([\d]{4}-[\d]{2}-[\d]{2}T[\d]{2}:00)$/);
+			// Parse period from key: usage:{userId}:YYYY-MM-DDTHH:00 (or usage:{userId}:YYYY-MM-DDTHH:00:provider:keyOwner:keyHint)
+			// The period format is YYYY-MM-DDTHH:00, so we extract it from the key
+			const match = kvKey.name.match(/^usage:([^:]+):([\d]{4}-[\d]{2}-[\d]{2}T[\d]{2}:00)/);
 			if (!match) continue;
 
 			// match[2] contains the full period: YYYY-MM-DDTHH:00

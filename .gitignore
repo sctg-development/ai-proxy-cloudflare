@@ -178,3 +178,6 @@ ai.json
 sample_forwarded_request.sh
 users.json
 secrets.json
+usage.ndjson
+bun.lock
+errors.ndjson
