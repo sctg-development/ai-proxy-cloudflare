@@ -555,7 +555,13 @@ app.get("/v1/keypool/stats", async (c) => {
  * GET /v1/keypool/errors
  *
  * Get error statistics.
+ * Query params: period (hour|day|week|month, default: day)
  * Requires a valid user Bearer token.
+ *
+ * ```bash
+ * curl -X GET "https://your-worker-url/v1/keypool/errors?period=day" \
+ *      -H	 "Authorization: Bearer <user-token>"
+ * ```
  */
 app.get("/v1/keypool/errors", async (c) => {
 	const env = c.env;
@@ -570,7 +576,8 @@ app.get("/v1/keypool/errors", async (c) => {
 		return c.json({ error: "Invalid keypool authorization" }, { status: 403 });
 	}
 
-	const stats = await getErrorStats(env.KV_AI_PROXY, userId);
+	const period = (c.req.query("period") as UsagePeriod) || "day";
+	const stats = await getErrorStats(env.KV_AI_PROXY, userId, period);
 	return c.json({ object: "list", data: stats });
 });
 

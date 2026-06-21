@@ -231,6 +231,9 @@ const MAX_RECORDS_PER_QUERY = 1000;
 /**
  * Get the user ID from the Authorization header.
  * Uses the Bearer token as the user identifier.
+ *
+ * @param authHeader - Authorization header value
+ * @returns User ID (Bearer token) or null if not present
  */
 export function getUserIdFromAuth(authHeader: string | null): string | null {
 	const token = extractBearerToken(authHeader);
@@ -277,6 +280,11 @@ function makeErrorKey(
  * Record a successful API key usage event.
  * Uses atomic read-modify-write to aggregate in hourly buckets.
  * Called by the SDK after a successful request.
+ *
+ * @param kv - Cloudflare KV namespace for data storage
+ * @param userId - User identifier (Bearer token)
+ * @param entry - Usage entry containing provider, model, key details and token counts
+ * @throws If KV operations fail after maximum retry attempts
  */
 export async function recordUsage(
 	kv: KVNamespace,
@@ -337,6 +345,11 @@ export async function recordUsage(
  * Record a failed API key request.
  * Uses atomic read-modify-write to aggregate in hourly buckets.
  * Called by the SDK after a failed request.
+ *
+ * @param kv - Cloudflare KV namespace for data storage
+ * @param userId - User identifier (Bearer token)
+ * @param entry - Error entry containing provider, model, key details and error code
+ * @throws If KV operations fail after maximum retry attempts
  */
 export async function recordError(
 	kv: KVNamespace,
@@ -403,6 +416,13 @@ interface ErrorNdjsonRecord extends KeyErrorEntry {
 /**
  * Migrate a usage NDJSON payload into KV for the authenticated user.
  * Uses hourly buckets with raw NDJSON lines stored in arrays.
+ * 
+ * @param kv - Cloudflare KV namespace for data storage
+ * @param userId - User identifier (Bearer token)
+ * @param body - NDJSON string containing usage records	
+ * @param startline - Optional starting line number (1-based) to process
+ * @param endline - Optional ending line number (1-based) to process
+ * @returns MigrateResult containing counts of inserted, duplicates, created keys, and updated keys
  */
 export async function migrateUsageNdjson(
 	kv: KVNamespace,
@@ -530,6 +550,13 @@ export async function migrateUsageNdjson(
 /**
  * Migrate an error NDJSON payload into KV for the authenticated user.
  * Uses hourly buckets with raw NDJSON lines stored in arrays.
+ * 
+ * @param kv - Cloudflare KV namespace for data storage
+ * @param userId - User identifier (Bearer token)
+ * @param body - NDJSON string containing error records
+ * @param startline - Optional starting line number (1-based) to process
+ * @param endline - Optional ending line number (1-based) to process
+ * @returns MigrateResult containing counts of inserted, duplicates, created keys, and updated keys
  */
 export async function migrateErrorNdjson(
 	kv: KVNamespace,
@@ -657,6 +684,11 @@ export async function migrateErrorNdjson(
  * Get usage statistics grouped by period, provider, owner, and key hint.
  * Reads raw hourly NDJSON arrays and aggregates them by requested period.
  * Compatible with KeypoolUsageDb.getUsageStats()
+ * 
+ * @param kv - Cloudflare KV namespace for data storage
+ * @param userId - User identifier (Bearer token)
+ * @param period - Time period for filtering statistics (hour|day|week|month)
+ * @returns Array of KeyUsageStat objects containing aggregated usage statistics
  */
 export async function getUsageStats(
 	kv: KVNamespace,
@@ -773,6 +805,9 @@ export async function getUsageStats(
 /**
  * Parse an hour bucket label to a timestamp.
  * Format: YYYY-MM-DDTHH:00
+ * 
+ * @param label - Hour bucket label string
+ * @returns Timestamp in milliseconds (UTC) or 0 if invalid
  */
 function parseHourBucket(label: string): number {
 	const match = label.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):00$/);
@@ -790,10 +825,17 @@ function parseHourBucket(label: string): number {
  * Get error statistics grouped by provider, owner, and key hint.
  * Reads raw hourly NDJSON arrays and aggregates error rates.
  * Compatible with KeypoolUsageDb.getErrorStats()
+ *
+ * @param kv - Cloudflare KV namespace for data storage
+ * @param userId - User identifier (Bearer token)
+ * @param period - Time period for filtering statistics (hour|day|week|month), defaults to "day"
+ * @returns Array of KeyErrorStat objects containing aggregated error statistics
+ * @throws If KV operations fail
  */
 export async function getErrorStats(
 	kv: KVNamespace,
 	userId: string,
+	period: UsagePeriod = "day",
 ): Promise<KeyErrorStat[]> {
 	const errorMap = new Map<string, {
 		provider: string;
@@ -820,7 +862,7 @@ export async function getErrorStats(
 			// match[2] contains the full period: YYYY-MM-DDTHH:00
 			const recordPeriod = match[2];
 			const recordDate = parseHourBucket(recordPeriod);
-			const cutoff = periodCutoffMs("month"); // Use month cutoff for consistency
+			const cutoff = periodCutoffMs(period);
 
 			if (recordDate < cutoff) continue;
 
@@ -947,6 +989,10 @@ export async function getErrorStats(
 /**
  * Delete all usage and error records for a user.
  * Compatible with KeypoolUsageDb.purge()
+ * 
+ * @param kv - Cloudflare KV namespace for data storage
+ * @param userId - User identifier (Bearer token)
+ * @returns Total number of bytes freed by deletion
  */
 export async function purge(
 	kv: KVNamespace,
@@ -988,6 +1034,10 @@ export async function purge(
 /**
  * Get the total size of usage/error records for a user.
  * Compatible with KeypoolUsageDb.getFileSizeBytes()
+ * 
+ * @param kv - Cloudflare KV namespace for data storage	
+ * @param userId - User identifier (Bearer token)
+ * @returns Total size in bytes of all usage and error records for the user	
  */
 export async function getFileSizeBytes(
 	kv: KVNamespace,
