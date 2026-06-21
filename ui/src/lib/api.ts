@@ -20,6 +20,7 @@
  */
 
 import type { AiConfig } from '../types/ai-config';
+import { decryptAiConfig } from './crypto';
 
 /**
  * Interface for API response errors.
@@ -70,7 +71,8 @@ export const ApiService = {
     const token = this.getToken();
     if (!token) throw new Error('No authorization token found');
 
-    const response = await fetch(`${import.meta.env.VAULT_URL}/ai.json`, {
+    // Use the encrypted endpoint to save CPU on the Cloudflare Worker
+    const response = await fetch(`${import.meta.env.VAULT_URL}/ai.json.enc`, {
       headers: {
         'Authorization': `Bearer ${token}`
       }
@@ -81,7 +83,9 @@ export const ApiService = {
       throw new Error(errorData.message || errorData.error || 'Failed to fetch config');
     }
 
-    return response.json();
+    const encryptedConfig = await response.text();
+    const decryptedConfig = await decryptAiConfig(encryptedConfig, token);
+    return JSON.parse(decryptedConfig) as AiConfig;
   },
 
   /**

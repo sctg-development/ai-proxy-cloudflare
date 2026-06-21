@@ -22,7 +22,7 @@
 
 /**
  * Encrypts a string using PBKDF2 and AES-256-CBC, compatible with OpenSSL "Salted__" format.
- * 
+ *
  * @param plaintext The string to encrypt.
  * @param password The password for derivation.
  * @returns Base64 encoded ciphertext with "Salted__" header.
@@ -34,16 +34,16 @@ export async function encryptVault(plaintext: string, password: string): Promise
 
   // Generate a random 8-byte salt
   const salt = crypto.getRandomValues(new Uint8Array(8));
-  
+
   // PBKDF2 derivation
   const baseKey = await crypto.subtle.importKey(
-    'raw', 
-    passwordBytes, 
-    'PBKDF2', 
-    false, 
+    'raw',
+    passwordBytes,
+    'PBKDF2',
+    false,
     ['deriveBits']
   );
-  
+
   const derivedBits = await crypto.subtle.deriveBits(
     {
       name: 'PBKDF2',
@@ -81,5 +81,57 @@ export async function encryptVault(plaintext: string, password: string): Promise
 
   // Convert to Base64
   return btoa(String.fromCharCode(...result));
+}
+
+/**
+ * Decrypts ai.json.enc encrypted with OpenSSL aes-256-cbc format.
+ * Matches the logic in src/lib/ai-enc.ts decryptAiConfig function.
+ *
+ * @param base64Ciphertext Base64 encoded ciphertext with "Salted__" header.
+ * @param password The password for decryption.
+ * @returns Decrypted string.
+ * @throws Error if decryption fails or format is invalid.
+ */
+export async function decryptAiConfig(
+  base64Ciphertext: string,
+  password: string,
+): Promise<string> {
+  const raw = Uint8Array.from(atob(base64Ciphertext.trim()), c => c.charCodeAt(0));
+
+  if (new TextDecoder().decode(raw.slice(0, 8)) !== 'Salted__') {
+    throw new Error(
+      'ai.json.enc: invalid format — expected OpenSSL "Salted__" header. ' +
+      'Ensure file was encrypted with -a flag.',
+    );
+  }
+
+  const salt = raw.slice(8, 16);
+  const ciphertext = raw.slice(16);
+
+  const pwBytes = new TextEncoder().encode(password);
+  const baseKey = await crypto.subtle.importKey('raw', pwBytes, 'PBKDF2', false, ['deriveBits']);
+  const derived = new Uint8Array(
+    await crypto.subtle.deriveBits(
+      { name: 'PBKDF2', hash: 'SHA-256', salt, iterations: 100_000 },
+      baseKey,
+      384,
+    ),
+  );
+
+  const aesKey = await crypto.subtle.importKey(
+    'raw',
+    derived.slice(0, 32),
+    'AES-CBC',
+    false,
+    ['decrypt'],
+  );
+
+  const plaintext = await crypto.subtle.decrypt(
+    { name: 'AES-CBC', iv: derived.slice(32, 48) },
+    aesKey,
+    ciphertext,
+  );
+
+  return new TextDecoder().decode(plaintext);
 }
 
