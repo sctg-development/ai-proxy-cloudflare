@@ -433,7 +433,7 @@ app.get("/:provider/v1/models/:modelId", async (c) => {
  * @param token - The Bearer token extracted from the Authorization header	
  * @returns true if the token matches the vault decryption token, false otherwise
  */
-export async function isKeypoolAuthValid(c: any, token: string | null, env: Env): Promise<boolean> {
+export async function isKeypoolAuthValid(c: any, token: string | null, _env: Env): Promise<boolean> {
 	try {
 		if (!token) return false;
 		const encrypted = await c.env.KV_AI_PROXY.get(AI_JSON_ENC_KV_KEY);
@@ -466,7 +466,7 @@ app.post("/v1/keypool/usage", async (c) => {
 		return c.json({ error: "Missing Authorization header" }, { status: 401 });
 	}
 
-	if (!isKeypoolAuthValid(c, extractBearerToken(authHeader), env)) {
+	if (!await isKeypoolAuthValid(c, extractBearerToken(authHeader), env)) {
 		return c.json({ error: "Invalid keypool authorization" }, { status: 403 });
 	}
 
@@ -501,7 +501,7 @@ app.post("/v1/keypool/error", async (c) => {
 		return c.json({ error: "Missing Authorization header" }, { status: 401 });
 	}
 
-	if (!isKeypoolAuthValid(c, extractBearerToken(authHeader), env)) {
+	if (!await isKeypoolAuthValid(c, extractBearerToken(authHeader), env)) {
 		return c.json({ error: "Invalid keypool authorization" }, { status: 403 });
 	}
 
@@ -542,7 +542,7 @@ app.get("/v1/keypool/stats", async (c) => {
 		return c.json({ error: "Missing Authorization header" }, { status: 401 });
 	}
 
-	if (!isKeypoolAuthValid(c, extractBearerToken(authHeader), env)) {
+	if (!await isKeypoolAuthValid(c, extractBearerToken(authHeader), env)) {
 		return c.json({ error: "Invalid keypool authorization" }, { status: 403 });
 	}
 
@@ -566,7 +566,7 @@ app.get("/v1/keypool/errors", async (c) => {
 		return c.json({ error: "Missing Authorization header" }, { status: 401 });
 	}
 
-	if (!isKeypoolAuthValid(c, extractBearerToken(authHeader), env)) {
+	if (!await isKeypoolAuthValid(c, extractBearerToken(authHeader), env)) {
 		return c.json({ error: "Invalid keypool authorization" }, { status: 403 });
 	}
 
@@ -597,7 +597,7 @@ app.post("/v1/keypool/migrate/usage", async (c) => {
 		return c.json({ error: "Missing Authorization header" }, { status: 401 });
 	}
 
-	if (!isKeypoolAuthValid(c, extractBearerToken(authHeader), env)) {
+	if (!await isKeypoolAuthValid(c, extractBearerToken(authHeader), env)) {
 		return c.json({ error: "Invalid keypool authorization" }, { status: 403 });
 	}
 
@@ -659,7 +659,7 @@ app.post("/v1/keypool/migrate/errors", async (c) => {
 		return c.json({ error: "Missing Authorization header" }, { status: 401 });
 	}
 
-	if (!isKeypoolAuthValid(c, extractBearerToken(authHeader), env)) {
+	if (!await isKeypoolAuthValid(c, extractBearerToken(authHeader), env)) {
 		return c.json({ error: "Invalid keypool authorization" }, { status: 403 });
 	}
 
@@ -718,7 +718,7 @@ app.post("/v1/keypool/purge", async (c) => {
 		return c.json({ error: "Missing Authorization header" }, { status: 401 });
 	}
 	
-	if (!isKeypoolAuthValid(c, extractBearerToken(authHeader), env)) {
+	if (!await isKeypoolAuthValid(c, extractBearerToken(authHeader), env)) {
 		return c.json({ error: "Invalid keypool authorization" }, { status: 403 });
 	}
 
@@ -741,7 +741,7 @@ app.get("/v1/keypool/size", async (c) => {
 		return c.json({ error: "Missing Authorization header" }, { status: 401 });
 	}
 	
-	if (!isKeypoolAuthValid(c, extractBearerToken(authHeader), env)) {
+	if (!await isKeypoolAuthValid(c, extractBearerToken(authHeader), env)) {
 		return c.json({ error: "Invalid keypool authorization" }, { status: 403 });
 	}
 

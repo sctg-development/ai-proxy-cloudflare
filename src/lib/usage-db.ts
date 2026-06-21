@@ -130,14 +130,29 @@ interface AggregatedErrorRecord {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+/**
+ * Pad a number with leading zeros to ensure it has 2 digits.
+ * @param n - The number to pad
+ * @returns String representation of the number with leading zero if needed
+ */
 function pad2(n: number): string {
 	return n.toString().padStart(2, "0");
 }
 
+/**
+ * Pad a number with leading zeros to ensure it has 3 digits.
+ * @param n - The number to pad
+ * @returns String representation of the number with leading zeros if needed
+ */
 function pad3(n: number): string {
 	return n.toString().padStart(3, "0");
 }
 
+/**
+ * Calculate the ISO week number for a given date.
+ * @param d - The date to calculate the week number for
+ * @returns ISO week number (1-53)
+ */
 function utcWeek(d: Date): number {
 	const jan1 = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
 	return Math.floor((d.getTime() - jan1.getTime()) / 86_400_000 / 7);
@@ -152,6 +167,12 @@ function getHourBucketLabel(): string {
 	return `${now.getUTCFullYear()}-${pad2(now.getUTCMonth() + 1)}-${pad2(now.getUTCDate())}T${pad2(now.getUTCHours())}:00`;
 }
 
+/**
+ * Format a timestamp into a period label based on the specified granularity.
+ * @param ts - Timestamp in milliseconds
+ * @param period - The time granularity (hour, day, week, month)
+ * @returns Formatted period label string
+ */
 function formatPeriodLabel(ts: number, period: UsagePeriod): string {
 	const d = new Date(ts);
 	switch (period) {
@@ -166,6 +187,11 @@ function formatPeriodLabel(ts: number, period: UsagePeriod): string {
 	}
 }
 
+/**
+ * Calculate the cutoff timestamp for filtering records based on the specified period.
+ * @param period - The time granularity (hour, day, week, month)
+ * @returns Timestamp in milliseconds representing the cutoff point
+ */
 function periodCutoffMs(period: UsagePeriod): number {
 	const now = Date.now();
 	switch (period) {
@@ -659,11 +685,43 @@ export async function getUsageStats(
 			const recordDate = parseHourBucket(recordPeriod);
 			if (recordDate < cutoff) continue;
 
-			// Get the array of raw records for this hour
+			// Get the value — may be an array (migration format) or an object (recordUsage format)
 			const value = await kv.get(kvKey.name, "json");
-			if (!Array.isArray(value)) continue;
+			const label = formatPeriodLabel(recordDate, period);
 
-			// Aggregate all records in this hour bucket
+			if (!Array.isArray(value)) {
+				// Aggregated object written by recordUsage: AggregatedUsageRecord
+				const rec = value as any;
+				if (
+					rec &&
+					rec.provider && rec.modelId && rec.keyOwner && rec.keyHint &&
+					typeof rec.promptTokens === "number" &&
+					typeof rec.completionTokens === "number" &&
+					typeof rec.requestCount === "number"
+				) {
+					const mapKey = `${label}\x00${rec.provider}\x00${rec.keyOwner}\x00${rec.keyHint}`;
+					const existing = map.get(mapKey);
+					if (existing) {
+						existing.promptTokens += rec.promptTokens;
+						existing.completionTokens += rec.completionTokens;
+						existing.requestCount += rec.requestCount;
+					} else {
+						map.set(mapKey, {
+							period: label,
+							provider: rec.provider,
+							modelId: rec.modelId,
+							keyOwner: rec.keyOwner,
+							keyHint: rec.keyHint,
+							promptTokens: rec.promptTokens,
+							completionTokens: rec.completionTokens,
+							requestCount: rec.requestCount,
+						});
+					}
+				}
+				continue;
+			}
+
+			// Array format from migrateUsageNdjson: each element is a raw request record
 			for (const record of value) {
 				if (
 					!record.provider ||
@@ -677,7 +735,6 @@ export async function getUsageStats(
 				}
 
 				// Group by requested period
-				const label = formatPeriodLabel(recordDate, period);
 				const mapKey = `${label}\x00${record.provider}\x00${record.keyOwner}\x00${record.keyHint}`;
 				const existing = map.get(mapKey);
 
@@ -768,9 +825,22 @@ export async function getErrorStats(
 			if (recordDate < cutoff) continue;
 
 			const value = await kv.get(kvKey.name, "json");
-			if (!Array.isArray(value)) continue;
 
-			// Count requests in this hour bucket
+			if (!Array.isArray(value)) {
+				// Aggregated object from recordUsage: use requestCount directly
+				const rec = value as any;
+				if (
+					rec &&
+					rec.provider && rec.keyOwner && rec.keyHint &&
+					typeof rec.requestCount === "number"
+				) {
+					const key = `${rec.provider}\x00${rec.keyOwner}\x00${rec.keyHint}`;
+					usageMap.set(key, (usageMap.get(key) ?? 0) + rec.requestCount);
+				}
+				continue;
+			}
+
+			// Array format: each element is one raw request record
 			for (const record of value) {
 				if (
 					!record.provider ||
@@ -793,9 +863,36 @@ export async function getErrorStats(
 
 		for (const kvKey of errorList.keys) {
 			const value = await kv.get(kvKey.name, "json");
-			if (!Array.isArray(value)) continue;
 
-			// Aggregate errors in this hour bucket
+			if (!Array.isArray(value)) {
+				// Aggregated object from recordError: AggregatedErrorRecord
+				const rec = value as any;
+				if (
+					rec &&
+					rec.provider && rec.keyOwner && rec.keyHint &&
+					typeof rec.errorCount === "number"
+				) {
+					const key = `${rec.provider}\x00${rec.keyOwner}\x00${rec.keyHint}`;
+					const existing = errorMap.get(key);
+					if (existing) {
+						existing.errorCount += rec.errorCount;
+						if (rec.lastErrorCode !== null && rec.lastErrorCode !== undefined) {
+							existing.lastErrorCode = rec.lastErrorCode;
+						}
+					} else {
+						errorMap.set(key, {
+							provider: rec.provider,
+							keyOwner: rec.keyOwner,
+							keyHint: rec.keyHint,
+							errorCount: rec.errorCount,
+							lastErrorCode: rec.lastErrorCode ?? null,
+						});
+					}
+				}
+				continue;
+			}
+
+			// Array format: each element is one raw error record
 			for (const record of value) {
 				if (
 					!record.provider ||
