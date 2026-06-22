@@ -16,17 +16,19 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 //
-// KeypoolLive Usage Database - KV-backed storage for shared usage statistics
+// KeypoolLive Usage Database - SQLite-backed Durable Objects storage
 // Compatible with apps/vscode/src/core/keypoollive/KeypoolUsageDb.ts format
 //
 // OPTIMIZED FOR CLOUDFLARE WORKERS FREE TIER:
-// - Uses 1 KV write per hour per (user, provider, keyOwner, keyHint) combination
+// - Uses 1 SQLite row per hour per (user, provider, keyOwner, keyHint) combination
 // - Reduces writes from N (per request) to ~N/period (per hour bucket)
-// - Free tier: 1000 writes/day, 1 write/second per key
+// - Free tier: 100,000 DO requests/day, 13,000 GB-s/day, 5 GB storage
 
 import { extractBearerToken } from "./auth";
+import { DurableObject } from "cloudflare:workers";
 
-type KVNamespace = any;
+type DurableObjectNamespace = any;
+type DurableObjectStub = any;
 
 /**
  * Time granularity for usage statistics aggregation.
@@ -274,538 +276,487 @@ function makeErrorKey(
 	return `${ERRORS_KEY_PREFIX}:${userId}:${period}:${provider}:${keyOwner}:${safeKeyHint}`;
 }
 
-// ─── Public API ────────────────────────────────────────────────────────────
+// ─── Durable Object Implementation ─────────────────────────────────────────
 
 /**
- * Record a successful API key usage event.
- * Uses atomic read-modify-write to aggregate in hourly buckets.
- * Called by the SDK after a successful request.
- *
- * @param kv - Cloudflare KV namespace for data storage
- * @param userId - User identifier (Bearer token)
- * @param entry - Usage entry containing provider, model, key details and token counts
- * @throws If KV operations fail after maximum retry attempts
+ * Durable Object for SQLite-backed usage database.
+ * One instance per user, identified by hashed user ID.
  */
-export async function recordUsage(
-	kv: KVNamespace,
-	userId: string,
-	entry: KeyUsageEntry,
-): Promise<void> {
-	const period = getHourBucketLabel();
-	const key = makeUsageKey(userId, period, entry.provider, entry.keyOwner, entry.keyHint);
+export class UsageDbDurableObject extends DurableObject {
+	private sql: any;
 
-	try {
-		// Atomic read-modify-write with retry
-		let record: AggregatedUsageRecord | null = null;
-		let attempts = 0;
-		const maxAttempts = 3;
+	constructor(state: DurableObjectState, env: any) {
+		super(state, env);
+		this.sql = state.storage.sql;
+		this.initializeSchema();
+	}
 
-		while (attempts < maxAttempts) {
-			// Read existing record
-			const existing = await kv.get(key, "json");
-			if (existing && typeof existing === "object") {
-				record = existing as AggregatedUsageRecord;
+	private initializeSchema(): void {
+		// Create tables for aggregated usage and errors
+		this.sql.exec(`
+			CREATE TABLE IF NOT EXISTS usage_hourly (
+				period_hour TEXT NOT NULL,
+				provider TEXT NOT NULL,
+				model_id TEXT NOT NULL,
+				key_owner TEXT NOT NULL,
+				key_hint TEXT NOT NULL,
+				prompt_tokens INTEGER NOT NULL DEFAULT 0,
+				completion_tokens INTEGER NOT NULL DEFAULT 0,
+				request_count INTEGER NOT NULL DEFAULT 0,
+				updated_at INTEGER NOT NULL,
+				PRIMARY KEY (period_hour, provider, model_id, key_owner, key_hint)
+			);
+		`);
+
+		this.sql.exec(`
+			CREATE TABLE IF NOT EXISTS errors_hourly (
+				period_hour TEXT NOT NULL,
+				provider TEXT NOT NULL,
+				model_id TEXT NOT NULL,
+				key_owner TEXT NOT NULL,
+				key_hint TEXT NOT NULL,
+				error_count INTEGER NOT NULL DEFAULT 0,
+				last_error_code INTEGER,
+				updated_at INTEGER NOT NULL,
+				PRIMARY KEY (period_hour, provider, model_id, key_owner, key_hint)
+			);
+		`);
+
+		// Table for idempotent NDJSON migration
+		this.sql.exec(`
+			CREATE TABLE IF NOT EXISTS imported_events (
+				event_hash TEXT PRIMARY KEY,
+				kind TEXT NOT NULL,
+				period_hour TEXT NOT NULL,
+				imported_at INTEGER NOT NULL
+			);
+		`);
+
+		// Indexes for faster queries
+		this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_usage_hourly_period ON usage_hourly(period_hour);`);
+		this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_errors_hourly_period ON errors_hourly(period_hour);`);
+	}
+
+	/**
+	 * Record a successful API key usage event.
+	 */
+	async recordUsage(entry: KeyUsageEntry): Promise<void> {
+		const period = getHourBucketLabel();
+		const now = Date.now();
+
+		this.sql.exec(
+			`
+			INSERT INTO usage_hourly (
+				period_hour,
+				provider,
+				model_id,
+				key_owner,
+				key_hint,
+				prompt_tokens,
+				completion_tokens,
+				request_count,
+				updated_at
+			)
+			VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
+			ON CONFLICT(period_hour, provider, model_id, key_owner, key_hint)
+			DO UPDATE SET
+				prompt_tokens = prompt_tokens + excluded.prompt_tokens,
+				completion_tokens = completion_tokens + excluded.completion_tokens,
+				request_count = request_count + 1,
+				updated_at = excluded.updated_at
+			`,
+			period,
+			entry.provider,
+			entry.modelId,
+			entry.keyOwner,
+			entry.keyHint,
+			entry.promptTokens,
+			entry.completionTokens,
+			now,
+		);
+	}
+
+	/**
+	 * Record a failed API key request.
+	 */
+	async recordError(entry: KeyErrorEntry): Promise<void> {
+		const period = getHourBucketLabel();
+		const now = Date.now();
+
+		this.sql.exec(
+			`
+			INSERT INTO errors_hourly (
+				period_hour,
+				provider,
+				model_id,
+				key_owner,
+				key_hint,
+				error_count,
+				last_error_code,
+				updated_at
+			)
+			VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+			ON CONFLICT(period_hour, provider, model_id, key_owner, key_hint)
+			DO UPDATE SET
+				error_count = error_count + 1,
+				last_error_code = COALESCE(excluded.last_error_code, last_error_code),
+				updated_at = excluded.updated_at
+			`,
+			period,
+			entry.provider,
+			entry.modelId,
+			entry.keyOwner,
+			entry.keyHint,
+			entry.errorCode,
+			now,
+		);
+	}
+
+	/**
+	 * Get usage statistics grouped by period.
+	 */
+	async getUsageStats(period: UsagePeriod): Promise<KeyUsageStat[]> {
+		const cutoff = periodCutoffMs(period);
+		const cutoffHour = formatPeriodLabel(cutoff, "hour");
+
+		// Read hourly records from SQLite
+		const cursor = this.sql.exec(
+			`SELECT * FROM usage_hourly WHERE period_hour >= ? ORDER BY period_hour DESC`,
+			cutoffHour,
+		);
+
+		// Aggregate by requested period
+		const map = new Map<string, KeyUsageStat>();
+		for (const row of cursor) {
+			const label = formatPeriodLabel(parseHourBucket(row.period_hour), period);
+			const mapKey = `${label}\x00${row.provider}\x00${row.key_owner}\x00${row.key_hint}`;
+
+			const existing = map.get(mapKey);
+			if (existing) {
+				existing.promptTokens += row.prompt_tokens;
+				existing.completionTokens += row.completion_tokens;
+				existing.requestCount += row.request_count;
 			} else {
-				record = {
-					period,
-					provider: entry.provider,
-					modelId: entry.modelId,
-					keyOwner: entry.keyOwner,
-					keyHint: entry.keyHint,
-					promptTokens: 0,
-					completionTokens: 0,
-					requestCount: 0,
-				};
-			}
-
-			// Update counters
-			record.promptTokens += entry.promptTokens;
-			record.completionTokens += entry.completionTokens;
-			record.requestCount += 1;
-
-			// Write back
-			try {
-				await kv.put(key, JSON.stringify(record));
-				return; // Success
-			} catch (e) {
-				attempts++;
-				if (attempts >= maxAttempts) {
-					console.error("[usage-db] Failed to record usage after retries:", e);
-				}
-				// Small delay before retry to reduce race condition
-				await new Promise((resolve) => setTimeout(resolve, 50));
+				map.set(mapKey, {
+					period: label,
+					provider: row.provider,
+					modelId: row.model_id,
+					keyOwner: row.key_owner,
+					keyHint: row.key_hint,
+					promptTokens: row.prompt_tokens,
+					completionTokens: row.completion_tokens,
+					requestCount: row.request_count,
+				});
 			}
 		}
-	} catch (e) {
-		console.error("[usage-db] Failed to record usage:", e);
-	}
-}
 
-/**
- * Record a failed API key request.
- * Uses atomic read-modify-write to aggregate in hourly buckets.
- * Called by the SDK after a failed request.
- *
- * @param kv - Cloudflare KV namespace for data storage
- * @param userId - User identifier (Bearer token)
- * @param entry - Error entry containing provider, model, key details and error code
- * @throws If KV operations fail after maximum retry attempts
- */
-export async function recordError(
-	kv: KVNamespace,
-	userId: string,
-	entry: KeyErrorEntry,
-): Promise<void> {
-	const period = getHourBucketLabel();
-	const key = makeErrorKey(userId, period, entry.provider, entry.keyOwner, entry.keyHint);
-
-	try {
-		// Atomic read-modify-write with retry
-		let record: AggregatedErrorRecord | null = null;
-		let attempts = 0;
-		const maxAttempts = 3;
-
-		while (attempts < maxAttempts) {
-			// Read existing record
-			const existing = await kv.get(key, "json");
-			if (existing && typeof existing === "object") {
-				record = existing as AggregatedErrorRecord;
-			} else {
-				record = {
-					period,
-					provider: entry.provider,
-					keyOwner: entry.keyOwner,
-					keyHint: entry.keyHint,
-					errorCount: 0,
-					lastErrorCode: null,
-				};
-			}
-
-			// Update counters
-			record.errorCount += 1;
-			if (entry.errorCode !== null) {
-				record.lastErrorCode = entry.errorCode;
-			}
-
-			// Write back
-			try {
-				await kv.put(key, JSON.stringify(record));
-				return; // Success
-			} catch (e) {
-				attempts++;
-				if (attempts >= maxAttempts) {
-					console.error("[usage-db] Failed to record error after retries:", e);
-				}
-				// Small delay before retry to reduce race condition
-				await new Promise((resolve) => setTimeout(resolve, 50));
-			}
-		}
-	} catch (e) {
-		console.error("[usage-db] Failed to record error:", e);
-	}
-}
-
-interface UsageNdjsonRecord extends KeyUsageEntry {
-	ts: number;
-}
-
-interface ErrorNdjsonRecord extends KeyErrorEntry {
-	ts: number;
-}
-
-/**
- * Migrate a usage NDJSON payload into KV for the authenticated user.
- * Uses hourly buckets with raw NDJSON lines stored in arrays.
- * 
- * @param kv - Cloudflare KV namespace for data storage
- * @param userId - User identifier (Bearer token)
- * @param body - NDJSON string containing usage records	
- * @param startline - Optional starting line number (1-based) to process
- * @param endline - Optional ending line number (1-based) to process
- * @returns MigrateResult containing counts of inserted, duplicates, created keys, and updated keys
- */
-export async function migrateUsageNdjson(
-	kv: KVNamespace,
-	userId: string,
-	body: string,
-	startline?: number,
-	endline?: number,
-): Promise<MigrateResult> {
-	// Group records by hour period
-	const hourlyRecords = new Map<string, UsageNdjsonRecord[]>();
-
-	// Split body into lines
-	const lines = body.split(/\r?\n/);
-
-	// Determine the range of lines to process
-	const start = startline !== undefined ? Math.max(0, startline - 1) : 0; // Convert to 0-based index
-	const end = endline !== undefined ? Math.min(lines.length - 1, endline - 1) : lines.length - 1; // Convert to 0-based index
-
-	for (let i = start; i <= end; i++) {
-		const rawLine = lines[i];
-		const line = rawLine.trim();
-		if (!line) continue;
-
-		let record: UsageNdjsonRecord;
-		try {
-			record = JSON.parse(line) as UsageNdjsonRecord;
-		} catch {
-			continue;
-		}
-
-		if (
-			!record.provider ||
-			!record.modelId ||
-			!record.keyOwner ||
-			!record.keyHint ||
-			typeof record.promptTokens !== "number" ||
-			typeof record.completionTokens !== "number" ||
-			typeof record.ts !== "number"
-		) {
-			continue;
-		}
-
-		const period = formatPeriodLabel(record.ts, "hour");
-		const existing = hourlyRecords.get(period) || [];
-		existing.push(record);
-		hourlyRecords.set(period, existing);
-	}
-
-	let inserted = 0;
-	let duplicates = 0;
-	let createdKeys = 0;
-	let updatedKeys = 0;
-
-	// Process each hour bucket with rate limiting
-	for (const [period, records] of hourlyRecords) {
-		const kvKey = `usage:${userId}:${period}`;
-
-		try {
-			// Read existing records for this hour
-			const existingData = await kv.get(kvKey, "json");
-			const existingRecords = Array.isArray(existingData) ? existingData : [];
-
-			// Create a Set of unique record keys from existing records
-			const existingRecordKeys = new Set<string>();
-			for (const existingRecord of existingRecords) {
-				const recordKey = `${existingRecord.ts}:${existingRecord.provider}:${existingRecord.modelId}:${existingRecord.keyOwner}:${existingRecord.keyHint}`;
-				existingRecordKeys.add(recordKey);
-			}
-
-			// Filter out duplicates from new records
-			const newUniqueRecords: UsageNdjsonRecord[] = [];
-			for (const record of records) {
-				const recordKey = `${record.ts}:${record.provider}:${record.modelId}:${record.keyOwner}:${record.keyHint}`;
-				if (!existingRecordKeys.has(recordKey)) {
-					newUniqueRecords.push(record);
-					inserted += 1;
-				} else {
-					duplicates += 1;
-				}
-			}
-
-			// Merge with new unique records
-			const updatedRecords = [...existingRecords, ...newUniqueRecords];
-
-			// Track key creation vs update
-			if (existingRecords.length === 0 && newUniqueRecords.length > 0) {
-				createdKeys += 1;
-			} else if (newUniqueRecords.length > 0) {
-				updatedKeys += 1;
-			}
-
-			// Write with retry mechanism
-			let attempts = 0;
-			const maxAttempts = 3;
-			let success = false;
-
-			while (attempts < maxAttempts && !success) {
-				try {
-					await kv.put(kvKey, JSON.stringify(updatedRecords));
-					success = true;
-				} catch (e) {
-					attempts++;
-					if (attempts >= maxAttempts) {
-						console.error(`[usage-db] Failed to migrate usage for period ${period} after retries:`, e);
-					} else {
-						// Small delay before retry
-						await new Promise((resolve) => setTimeout(resolve, 100));
-					}
-				}
-			}
-
-			// Rate limiting: wait between writes to different keys
-			if (hourlyRecords.size > 1) {
-				await new Promise((resolve) => setTimeout(resolve, 100));
-			}
-		} catch (e) {
-			console.error(`[usage-db] Failed to process usage for period ${period}:`, e);
-			duplicates += 1;
-		}
-	}
-
-	return { ok: true, inserted, duplicates, "created-keys": createdKeys, "updated-keys": updatedKeys };
-}
-
-/**
- * Migrate an error NDJSON payload into KV for the authenticated user.
- * Uses hourly buckets with raw NDJSON lines stored in arrays.
- * 
- * @param kv - Cloudflare KV namespace for data storage
- * @param userId - User identifier (Bearer token)
- * @param body - NDJSON string containing error records
- * @param startline - Optional starting line number (1-based) to process
- * @param endline - Optional ending line number (1-based) to process
- * @returns MigrateResult containing counts of inserted, duplicates, created keys, and updated keys
- */
-export async function migrateErrorNdjson(
-	kv: KVNamespace,
-	userId: string,
-	body: string,
-	startline?: number,
-	endline?: number,
-): Promise<MigrateResult> {
-	// Group records by hour period
-	const hourlyRecords = new Map<string, ErrorNdjsonRecord[]>();
-
-	// Split body into lines
-	const lines = body.split(/\r?\n/);
-
-	// Determine the range of lines to process
-	const start = startline !== undefined ? Math.max(0, startline - 1) : 0; // Convert to 0-based index
-	const end = endline !== undefined ? Math.min(lines.length - 1, endline - 1) : lines.length - 1; // Convert to 0-based index
-
-	for (let i = start; i <= end; i++) {
-		const rawLine = lines[i];
-		const line = rawLine.trim();
-		if (!line) continue;
-
-		let record: ErrorNdjsonRecord;
-		try {
-			record = JSON.parse(line) as ErrorNdjsonRecord;
-		} catch {
-			continue;
-		}
-
-		if (
-			!record.provider ||
-			!record.modelId ||
-			!record.keyOwner ||
-			!record.keyHint ||
-			(typeof record.errorCode !== "number" && record.errorCode !== null) ||
-			typeof record.ts !== "number"
-		) {
-			continue;
-		}
-
-		const period = formatPeriodLabel(record.ts, "hour");
-		const existing = hourlyRecords.get(period) || [];
-		existing.push(record);
-		hourlyRecords.set(period, existing);
-	}
-
-	let inserted = 0;
-	let duplicates = 0;
-	let createdKeys = 0;
-	let updatedKeys = 0;
-
-	// Process each hour bucket with rate limiting
-	for (const [period, records] of hourlyRecords) {
-		const kvKey = `errors:${userId}:${period}`;
-
-		try {
-			// Read existing records for this hour
-			const existingData = await kv.get(kvKey, "json");
-			const existingRecords = Array.isArray(existingData) ? existingData : [];
-
-			// Create a Set of unique record keys from existing records
-			const existingRecordKeys = new Set<string>();
-			for (const existingRecord of existingRecords) {
-				const recordKey = `${existingRecord.ts}:${existingRecord.provider}:${existingRecord.modelId}:${existingRecord.keyOwner}:${existingRecord.keyHint}:${existingRecord.errorCode}`;
-				existingRecordKeys.add(recordKey);
-			}
-
-			// Filter out duplicates from new records
-			const newUniqueRecords: ErrorNdjsonRecord[] = [];
-			for (const record of records) {
-				const recordKey = `${record.ts}:${record.provider}:${record.modelId}:${record.keyOwner}:${record.keyHint}:${record.errorCode}`;
-				if (!existingRecordKeys.has(recordKey)) {
-					newUniqueRecords.push(record);
-					inserted += 1;
-				} else {
-					duplicates += 1;
-				}
-			}
-
-			// Merge with new unique records
-			const updatedRecords = [...existingRecords, ...newUniqueRecords];
-
-			// Track key creation vs update
-			if (existingRecords.length === 0 && newUniqueRecords.length > 0) {
-				createdKeys += 1;
-			} else if (newUniqueRecords.length > 0) {
-				updatedKeys += 1;
-			}
-
-			// Write with retry mechanism
-			let attempts = 0;
-			const maxAttempts = 3;
-			let success = false;
-
-			while (attempts < maxAttempts && !success) {
-				try {
-					await kv.put(kvKey, JSON.stringify(updatedRecords));
-					success = true;
-				} catch (e) {
-					attempts++;
-					if (attempts >= maxAttempts) {
-						console.error(`[usage-db] Failed to migrate errors for period ${period} after retries:`, e);
-					} else {
-						// Small delay before retry
-						await new Promise((resolve) => setTimeout(resolve, 100));
-					}
-				}
-			}
-
-			// Rate limiting: wait between writes to different keys
-			if (hourlyRecords.size > 1) {
-				await new Promise((resolve) => setTimeout(resolve, 100));
-			}
-		} catch (e) {
-			console.error(`[usage-db] Failed to process errors for period ${period}:`, e);
-			duplicates += 1;
-		}
-	}
-
-	return { ok: true, inserted, duplicates, "created-keys": createdKeys, "updated-keys": updatedKeys };
-}
-
-/**
- * Get usage statistics grouped by period, provider, owner, and key hint.
- * Reads raw hourly NDJSON arrays and aggregates them by requested period.
- * Compatible with KeypoolUsageDb.getUsageStats()
- * 
- * @param kv - Cloudflare KV namespace for data storage
- * @param userId - User identifier (Bearer token)
- * @param period - Time period for filtering statistics (hour|day|week|month)
- * @returns Array of KeyUsageStat objects containing aggregated usage statistics
- */
-export async function getUsageStats(
-	kv: KVNamespace,
-	userId: string,
-	period: UsagePeriod,
-): Promise<KeyUsageStat[]> {
-	const cutoff = periodCutoffMs(period);
-	const map = new Map<string, KeyUsageStat>();
-
-	try {
-		// List all usage keys for this user (new format: usage:{userId}:YYYY-MM-DDTHH:00)
-		const listResult = await kv.list({
-			prefix: `usage:${userId}:`,
-			limit: MAX_RECORDS_PER_QUERY,
+		// Sort: period DESC, provider, keyOwner, keyHint
+		return Array.from(map.values()).sort((a, b) => {
+			if (b.period !== a.period) return b.period.localeCompare(a.period);
+			if (a.provider !== b.provider) return a.provider.localeCompare(b.provider);
+			if (a.keyOwner !== b.keyOwner) return a.keyOwner.localeCompare(b.keyOwner);
+			if (a.keyHint !== b.keyHint) return a.keyHint.localeCompare(b.keyHint);
+			return a.modelId.localeCompare(b.modelId);
 		});
+	}
 
-		// Process each hour bucket
-		for (const kvKey of listResult.keys) {
-			// Parse period from key: usage:{userId}:YYYY-MM-DDTHH:00 (or usage:{userId}:YYYY-MM-DDTHH:00:provider:keyOwner:keyHint)
-			// The period format is YYYY-MM-DDTHH:00, so we extract it from the key
-			const match = kvKey.name.match(/^usage:([^:]+):([\d]{4}-[\d]{2}-[\d]{2}T[\d]{2}:00)/);
-			if (!match) continue;
+	/**
+	 * Get error statistics grouped by provider, owner, and key hint.
+	 */
+	async getErrorStats(period: UsagePeriod): Promise<KeyErrorStat[]> {
+		const cutoff = periodCutoffMs(period);
+		const cutoffHour = formatPeriodLabel(cutoff, "hour");
 
-			// match[2] contains the full period: YYYY-MM-DDTHH:00
-			const recordPeriod = match[2];
-			const recordDate = parseHourBucket(recordPeriod);
-			if (recordDate < cutoff) continue;
+		// Read usage counts
+		const usageCursor = this.sql.exec(
+			`SELECT provider, key_owner, key_hint, SUM(request_count) as totalRequests
+			 FROM usage_hourly
+			 WHERE period_hour >= ?
+			 GROUP BY provider, key_owner, key_hint`,
+			cutoffHour,
+		);
 
-			// Get the value — may be an array (migration format) or an object (recordUsage format)
-			const value = await kv.get(kvKey.name, "json");
-			const label = formatPeriodLabel(recordDate, period);
+		const usageMap = new Map<string, number>();
+		for (const row of usageCursor) {
+			const key = `${row.provider}\x00${row.key_owner}\x00${row.key_hint}`;
+			usageMap.set(key, row.totalRequests || 0);
+		}
 
-			if (!Array.isArray(value)) {
-				// Aggregated object written by recordUsage: AggregatedUsageRecord
-				const rec = value as any;
-				if (
-					rec &&
-					rec.provider && rec.modelId && rec.keyOwner && rec.keyHint &&
-					typeof rec.promptTokens === "number" &&
-					typeof rec.completionTokens === "number" &&
-					typeof rec.requestCount === "number"
-				) {
-					const mapKey = `${label}\x00${rec.provider}\x00${rec.keyOwner}\x00${rec.keyHint}`;
-					const existing = map.get(mapKey);
-					if (existing) {
-						existing.promptTokens += rec.promptTokens;
-						existing.completionTokens += rec.completionTokens;
-						existing.requestCount += rec.requestCount;
-					} else {
-						map.set(mapKey, {
-							period: label,
-							provider: rec.provider,
-							modelId: rec.modelId,
-							keyOwner: rec.keyOwner,
-							keyHint: rec.keyHint,
-							promptTokens: rec.promptTokens,
-							completionTokens: rec.completionTokens,
-							requestCount: rec.requestCount,
-						});
-					}
-				}
-				continue;
+		// Read error counts
+		const errorCursor = this.sql.exec(
+			`SELECT * FROM errors_hourly WHERE period_hour >= ?`,
+			cutoffHour,
+		);
+
+		const errorMap = new Map<string, { errorCount: number; lastErrorCode: number | null }>();
+		for (const row of errorCursor) {
+			const key = `${row.provider}\x00${row.key_owner}\x00${row.key_hint}`;
+			const existing = errorMap.get(key) || { errorCount: 0, lastErrorCode: null };
+			existing.errorCount += row.error_count;
+			if (row.last_error_code !== null && row.last_error_code !== undefined) {
+				existing.lastErrorCode = row.last_error_code;
 			}
+			errorMap.set(key, existing);
+		}
 
-			// Array format from migrateUsageNdjson: each element is a raw request record
-			for (const record of value) {
-				if (
-					!record.provider ||
-					!record.modelId ||
-					!record.keyOwner ||
-					!record.keyHint ||
-					typeof record.promptTokens !== "number" ||
-					typeof record.completionTokens !== "number"
-				) {
+		// Build result
+		const result: KeyErrorStat[] = [];
+		for (const [key, e] of errorMap) {
+			const [provider, keyOwner, keyHint] = key.split('\x00');
+			result.push({
+				provider,
+				keyOwner,
+				keyHint,
+				totalRequests: usageMap.get(key) || 0,
+				errorCount: e.errorCount,
+				errorRate: e.errorCount / Math.max(usageMap.get(key) || 1, 1),
+				lastErrorCode: e.lastErrorCode,
+			});
+		}
+
+		// Sort by descending error rate
+		return result.sort((a, b) => b.errorRate - a.errorRate);
+	}
+
+	/**
+	 * Migrate usage NDJSON payload into SQLite.
+	 */
+	async migrateUsageNdjson(body: string, startline?: number, endline?: number): Promise<MigrateResult> {
+		const lines = body.split(/\r?\n/);
+		const start = startline !== undefined ? Math.max(0, startline - 1) : 0;
+		const end = endline !== undefined ? Math.min(lines.length - 1, endline - 1) : lines.length - 1;
+
+		let inserted = 0;
+		let duplicates = 0;
+		let createdKeys = 0;
+		let updatedKeys = 0;
+
+		for (let i = start; i <= end; i++) {
+			const line = lines[i].trim();
+			if (!line) continue;
+
+			try {
+				const record = JSON.parse(line) as any;
+				if (!record.provider || !record.modelId || !record.keyOwner || !record.keyHint ||
+					typeof record.promptTokens !== "number" || typeof record.completionTokens !== "number" ||
+					typeof record.ts !== "number") {
 					continue;
 				}
 
-				// Group by requested period
-				const mapKey = `${label}\x00${record.provider}\x00${record.keyOwner}\x00${record.keyHint}`;
-				const existing = map.get(mapKey);
+				// Create unique hash for idempotency
+				const hash = await this.createEventHash(
+					`${record.ts}:${record.provider}:${record.modelId}:${record.keyOwner}:${record.keyHint}:${record.promptTokens}:${record.completionTokens}`,
+					"usage"
+				);
 
-				if (existing) {
-					existing.promptTokens += record.promptTokens;
-					existing.completionTokens += record.completionTokens;
-					existing.requestCount += 1;
-				} else {
-					map.set(mapKey, {
-						period: label,
-						provider: record.provider,
-						modelId: record.modelId,
-						keyOwner: record.keyOwner,
-						keyHint: record.keyHint,
-						promptTokens: record.promptTokens,
-						completionTokens: record.completionTokens,
-						requestCount: 1,
-					});
+				// Check if already imported
+				const existing = this.sql.exec(
+					`SELECT 1 FROM imported_events WHERE event_hash = ?`,
+					hash,
+				).toArray();
+
+				if (existing.length > 0) {
+					duplicates++;
+					continue;
 				}
+
+				// Insert into imported_events
+				this.sql.exec(
+					`INSERT INTO imported_events (event_hash, kind, period_hour, imported_at) VALUES (?, ?, ?, ?)`,
+					hash,
+					"usage",
+					formatPeriodLabel(record.ts, "hour"),
+					Date.now(),
+				);
+
+				// Aggregate into usage_hourly
+				const period = formatPeriodLabel(record.ts, "hour");
+				this.sql.exec(
+					`
+					INSERT INTO usage_hourly (
+						period_hour,
+						provider,
+						model_id,
+						key_owner,
+						key_hint,
+						prompt_tokens,
+						completion_tokens,
+						request_count,
+						updated_at
+					)
+					VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
+					ON CONFLICT(period_hour, provider, model_id, key_owner, key_hint)
+					DO UPDATE SET
+						prompt_tokens = prompt_tokens + excluded.prompt_tokens,
+						completion_tokens = completion_tokens + excluded.completion_tokens,
+						request_count = request_count + 1,
+						updated_at = excluded.updated_at
+					`,
+					period,
+					record.provider,
+					record.modelId,
+					record.keyOwner,
+					record.keyHint,
+					record.promptTokens,
+					record.completionTokens,
+					Date.now(),
+				);
+
+				inserted++;
+			} catch (e) {
+				console.error(`[usage-db] Failed to parse usage line ${i}:`, e);
+				duplicates++;
 			}
 		}
-	} catch (e) {
-		console.error("[usage-db] Failed to get usage stats:", e);
+
+		return { ok: true, inserted, duplicates, "created-keys": createdKeys, "updated-keys": updatedKeys };
 	}
 
-	// Sort: period DESC, provider, keyOwner, keyHint (mirrors old SQL ORDER BY)
-	return Array.from(map.values()).sort((a, b) => {
-		if (b.period !== a.period) return b.period.localeCompare(a.period);
-		if (a.provider !== b.provider) return a.provider.localeCompare(b.provider);
-		if (a.keyOwner !== b.keyOwner) return a.keyOwner.localeCompare(b.keyOwner);
-		if (a.modelId !== b.modelId) return a.modelId.localeCompare(b.modelId);
-		return a.keyHint.localeCompare(b.keyHint);
-	});
+	/**
+	 * Migrate error NDJSON payload into SQLite.
+	 */
+	async migrateErrorNdjson(body: string, startline?: number, endline?: number): Promise<MigrateResult> {
+		const lines = body.split(/\r?\n/);
+		const start = startline !== undefined ? Math.max(0, startline - 1) : 0;
+		const end = endline !== undefined ? Math.min(lines.length - 1, endline - 1) : lines.length - 1;
+
+		let inserted = 0;
+		let duplicates = 0;
+		let createdKeys = 0;
+		let updatedKeys = 0;
+
+		for (let i = start; i <= end; i++) {
+			const line = lines[i].trim();
+			if (!line) continue;
+
+			try {
+				const record = JSON.parse(line) as any;
+				if (!record.provider || !record.modelId || !record.keyOwner || !record.keyHint ||
+					(typeof record.errorCode !== "number" && record.errorCode !== null) ||
+					typeof record.ts !== "number") {
+					continue;
+				}
+
+				// Create unique hash for idempotency
+				const hash = await this.createEventHash(
+					`${record.ts}:${record.provider}:${record.modelId}:${record.keyOwner}:${record.keyHint}:${record.errorCode}`,
+					"error"
+				);
+
+				// Check if already imported
+				const existing = this.sql.exec(
+					`SELECT 1 FROM imported_events WHERE event_hash = ?`,
+					hash,
+				).toArray();
+
+				if (existing.length > 0) {
+					duplicates++;
+					continue;
+				}
+
+				// Insert into imported_events
+				this.sql.exec(
+					`INSERT INTO imported_events (event_hash, kind, period_hour, imported_at) VALUES (?, ?, ?, ?)`,
+					hash,
+					"error",
+					formatPeriodLabel(record.ts, "hour"),
+					Date.now(),
+				);
+
+				// Aggregate into errors_hourly
+				const period = formatPeriodLabel(record.ts, "hour");
+				this.sql.exec(
+					`
+					INSERT INTO errors_hourly (
+						period_hour,
+						provider,
+						model_id,
+						key_owner,
+						key_hint,
+						error_count,
+						last_error_code,
+						updated_at
+					)
+					VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+					ON CONFLICT(period_hour, provider, model_id, key_owner, key_hint)
+					DO UPDATE SET
+						error_count = error_count + 1,
+						last_error_code = COALESCE(excluded.last_error_code, last_error_code),
+						updated_at = excluded.updated_at
+					`,
+					period,
+					record.provider,
+					record.modelId,
+					record.keyOwner,
+					record.keyHint,
+					record.errorCode,
+					Date.now(),
+				);
+
+				inserted++;
+			} catch (e) {
+				console.error(`[usage-db] Failed to parse error line ${i}:`, e);
+				duplicates++;
+			}
+		}
+
+		return { ok: true, inserted, duplicates, "created-keys": createdKeys, "updated-keys": updatedKeys };
+	}
+
+	/**
+	 * Delete all usage and error records for a user.
+	 */
+	async purge(): Promise<number> {
+		// Get approximate size before deletion
+		const usageCursor = this.sql.exec(`SELECT COUNT(*) as count FROM usage_hourly`);
+		const errorCursor = this.sql.exec(`SELECT COUNT(*) as count FROM errors_hourly`);
+
+		const usageCount = usageCursor.toArray()[0]?.count || 0;
+		const errorCount = errorCursor.toArray()[0]?.count || 0;
+
+		// Estimate size: ~200 bytes per row
+		const freed = (usageCount + errorCount) * 200;
+
+		// Delete all records
+		this.sql.exec(`DELETE FROM usage_hourly`);
+		this.sql.exec(`DELETE FROM errors_hourly`);
+		this.sql.exec(`DELETE FROM imported_events`);
+
+		return freed;
+	}
+
+	/**
+	 * Get the total size of usage/error records for a user.
+	 */
+	async getFileSizeBytes(): Promise<number> {
+		// Approximate size calculation
+		const usageCursor = this.sql.exec(`SELECT COUNT(*) as count FROM usage_hourly`);
+		const errorCursor = this.sql.exec(`SELECT COUNT(*) as count FROM errors_hourly`);
+
+		const usageCount = usageCursor.toArray()[0]?.count || 0;
+		const errorCount = errorCursor.toArray()[0]?.count || 0;
+
+		// Estimate ~200 bytes per row
+		return (usageCount + errorCount) * 200;
+	}
+
+	/**
+	 * Create SHA-256 hash of a string for idempotent migration.
+	 */
+	private async createEventHash(data: string, kind: string): Promise<string> {
+		const text = `${kind}:${data}`;
+		const encoder = new TextEncoder();
+		const encoded = encoder.encode(text);
+		const hashBuffer = await crypto.subtle.digest('SHA-256', encoded);
+		const hashArray = Array.from(new Uint8Array(hashBuffer));
+		return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+	}
 }
 
 /**
  * Parse an hour bucket label to a timestamp.
  * Format: YYYY-MM-DDTHH:00
- * 
+ *
  * @param label - Hour bucket label string
  * @returns Timestamp in milliseconds (UTC) or 0 if invalid
  */
@@ -821,255 +772,206 @@ function parseHourBucket(label: string): number {
 	);
 }
 
+// ─── Public API (Durable Object version) ─────────────────────────────────────
+
+/**
+ * Get a Durable Object stub for a user.
+ */
+async function getUsageStub(usageDo: DurableObjectNamespace, userId: string): Promise<DurableObjectStub> {
+	// Hash user ID for privacy (don't use raw token in DO ID)
+	const hash = await createUserIdHash(userId);
+	return usageDo.get(usageDo.idFromName(`usage:${hash}`));
+}
+
+/**
+ * Create SHA-256 hash of user ID for Durable Object naming.
+ */
+async function createUserIdHash(userId: string): Promise<string> {
+	const encoder = new TextEncoder();
+	const encoded = encoder.encode(userId);
+	const hashBuffer = await crypto.subtle.digest('SHA-256', encoded);
+	const hashArray = Array.from(new Uint8Array(hashBuffer));
+	return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Record a successful API key usage event.
+ * Uses Durable Object SQLite storage.
+ *
+ * @param usageDo - Durable Object namespace
+ * @param userId - User identifier (Bearer token)
+ * @param entry - Usage entry containing provider, model, key details and token counts
+ */
+export async function recordUsage(
+	usageDo: DurableObjectNamespace,
+	userId: string,
+	entry: KeyUsageEntry,
+): Promise<void> {
+	try {
+		const stub = await getUsageStub(usageDo, userId);
+		await stub.recordUsage(entry);
+	} catch (e) {
+		console.error("[usage-db] Failed to record usage:", e);
+	}
+}
+
+/**
+ * Record a failed API key request.
+ * Uses Durable Object SQLite storage.
+ *
+ * @param usageDo - Durable Object namespace
+ * @param userId - User identifier (Bearer token)
+ * @param entry - Error entry containing provider, model, key details and error code
+ */
+export async function recordError(
+	usageDo: DurableObjectNamespace,
+	userId: string,
+	entry: KeyErrorEntry,
+): Promise<void> {
+	try {
+		const stub = await getUsageStub(usageDo, userId);
+		await stub.recordError(entry);
+	} catch (e) {
+		console.error("[usage-db] Failed to record error:", e);
+	}
+}
+
+/**
+ * Get usage statistics grouped by period, provider, owner, and key hint.
+ * Uses Durable Object SQLite storage.
+ *
+ * @param usageDo - Durable Object namespace
+ * @param userId - User identifier (Bearer token)
+ * @param period - Time period for filtering statistics (hour|day|week|month)
+ * @returns Array of KeyUsageStat objects containing aggregated usage statistics
+ */
+export async function getUsageStats(
+	usageDo: DurableObjectNamespace,
+	userId: string,
+	period: UsagePeriod,
+): Promise<KeyUsageStat[]> {
+	try {
+		const stub = await getUsageStub(usageDo, userId);
+		return await stub.getUsageStats(period);
+	} catch (e) {
+		console.error("[usage-db] Failed to get usage stats:", e);
+		return [];
+	}
+}
+
 /**
  * Get error statistics grouped by provider, owner, and key hint.
- * Reads raw hourly NDJSON arrays and aggregates error rates.
- * Compatible with KeypoolUsageDb.getErrorStats()
+ * Uses Durable Object SQLite storage.
  *
- * @param kv - Cloudflare KV namespace for data storage
+ * @param usageDo - Durable Object namespace
  * @param userId - User identifier (Bearer token)
- * @param period - Time period for filtering statistics (hour|day|week|month), defaults to "day"
+ * @param period - Time period for filtering statistics (hour|day|week|month)
  * @returns Array of KeyErrorStat objects containing aggregated error statistics
- * @throws If KV operations fail
  */
 export async function getErrorStats(
-	kv: KVNamespace,
+	usageDo: DurableObjectNamespace,
 	userId: string,
 	period: UsagePeriod = "day",
 ): Promise<KeyErrorStat[]> {
-	const errorMap = new Map<string, {
-		provider: string;
-		keyOwner: string;
-		keyHint: string;
-		errorCount: number;
-		lastErrorCode: number | null;
-	}>();
-	const usageMap = new Map<string, number>();
-
 	try {
-		// Get usage counts from raw hourly records (new format: usage:{userId}:YYYY-MM-DDTHH:00)
-		const usageList = await kv.list({
-			prefix: `usage:${userId}:`,
-			limit: MAX_RECORDS_PER_QUERY,
-		});
-
-		for (const kvKey of usageList.keys) {
-			// Parse period from key: usage:{userId}:YYYY-MM-DDTHH:00 (or usage:{userId}:YYYY-MM-DDTHH:00:provider:keyOwner:keyHint)
-			// The period format is YYYY-MM-DDTHH:00, so we extract it from the key
-			const match = kvKey.name.match(/^usage:([^:]+):([\d]{4}-[\d]{2}-[\d]{2}T[\d]{2}:00)/);
-			if (!match) continue;
-
-			// match[2] contains the full period: YYYY-MM-DDTHH:00
-			const recordPeriod = match[2];
-			const recordDate = parseHourBucket(recordPeriod);
-			const cutoff = periodCutoffMs(period);
-
-			if (recordDate < cutoff) continue;
-
-			const value = await kv.get(kvKey.name, "json");
-
-			if (!Array.isArray(value)) {
-				// Aggregated object from recordUsage: use requestCount directly
-				const rec = value as any;
-				if (
-					rec &&
-					rec.provider && rec.keyOwner && rec.keyHint &&
-					typeof rec.requestCount === "number"
-				) {
-					const key = `${rec.provider}\x00${rec.keyOwner}\x00${rec.keyHint}`;
-					usageMap.set(key, (usageMap.get(key) ?? 0) + rec.requestCount);
-				}
-				continue;
-			}
-
-			// Array format: each element is one raw request record
-			for (const record of value) {
-				if (
-					!record.provider ||
-					!record.keyOwner ||
-					!record.keyHint
-				) {
-					continue;
-				}
-
-				const key = `${record.provider}\x00${record.keyOwner}\x00${record.keyHint}`;
-				usageMap.set(key, (usageMap.get(key) ?? 0) + 1);
-			}
-		}
-
-		// Get error counts from raw hourly records (new format: errors:{userId}:YYYY-MM-DDTHH:00)
-		const errorList = await kv.list({
-			prefix: `errors:${userId}:`,
-			limit: MAX_RECORDS_PER_QUERY,
-		});
-
-		for (const kvKey of errorList.keys) {
-			const value = await kv.get(kvKey.name, "json");
-
-			if (!Array.isArray(value)) {
-				// Aggregated object from recordError: AggregatedErrorRecord
-				const rec = value as any;
-				if (
-					rec &&
-					rec.provider && rec.keyOwner && rec.keyHint &&
-					typeof rec.errorCount === "number"
-				) {
-					const key = `${rec.provider}\x00${rec.keyOwner}\x00${rec.keyHint}`;
-					const existing = errorMap.get(key);
-					if (existing) {
-						existing.errorCount += rec.errorCount;
-						if (rec.lastErrorCode !== null && rec.lastErrorCode !== undefined) {
-							existing.lastErrorCode = rec.lastErrorCode;
-						}
-					} else {
-						errorMap.set(key, {
-							provider: rec.provider,
-							keyOwner: rec.keyOwner,
-							keyHint: rec.keyHint,
-							errorCount: rec.errorCount,
-							lastErrorCode: rec.lastErrorCode ?? null,
-						});
-					}
-				}
-				continue;
-			}
-
-			// Array format: each element is one raw error record
-			for (const record of value) {
-				if (
-					!record.provider ||
-					!record.keyOwner ||
-					!record.keyHint ||
-					(typeof record.errorCode !== "number" && record.errorCode !== null)
-				) {
-					continue;
-				}
-
-				const key = `${record.provider}\x00${record.keyOwner}\x00${record.keyHint}`;
-				const existing = errorMap.get(key);
-
-				if (existing) {
-					existing.errorCount += 1;
-					if (record.errorCode !== null) {
-						existing.lastErrorCode = record.errorCode;
-					}
-				} else {
-					errorMap.set(key, {
-						provider: record.provider,
-						keyOwner: record.keyOwner,
-						keyHint: record.keyHint,
-						errorCount: 1,
-						lastErrorCode: record.errorCode,
-					});
-				}
-			}
-		}
+		const stub = await getUsageStub(usageDo, userId);
+		return await stub.getErrorStats(period);
 	} catch (e) {
 		console.error("[usage-db] Failed to get error stats:", e);
+		return [];
 	}
+}
 
-	const result: KeyErrorStat[] = [];
-	for (const [, e] of errorMap) {
-		const totalRequests = usageMap.get(`${e.provider}\x00${e.keyOwner}\x00${e.keyHint}`) ?? 0;
-		result.push({
-			provider: e.provider,
-			keyOwner: e.keyOwner,
-			keyHint: e.keyHint,
-			totalRequests,
-			errorCount: e.errorCount,
-			errorRate: e.errorCount / Math.max(totalRequests, 1),
-			lastErrorCode: e.lastErrorCode,
-		});
+/**
+ * Migrate a usage NDJSON payload into Durable Object SQLite storage.
+ *
+ * @param usageDo - Durable Object namespace
+ * @param userId - User identifier (Bearer token)
+ * @param body - NDJSON string containing usage records
+ * @param startline - Optional starting line number (1-based) to process
+ * @param endline - Optional ending line number (1-based) to process
+ * @returns MigrateResult containing counts of inserted, duplicates, created keys, and updated keys
+ */
+export async function migrateUsageNdjson(
+	usageDo: DurableObjectNamespace,
+	userId: string,
+	body: string,
+	startline?: number,
+	endline?: number,
+): Promise<MigrateResult> {
+	try {
+		const stub = await getUsageStub(usageDo, userId);
+		return await stub.migrateUsageNdjson(body, startline, endline);
+	} catch (e) {
+		console.error("[usage-db] Failed to migrate usage:", e);
+		return { ok: false, inserted: 0, duplicates: 0, "created-keys": 0, "updated-keys": 0 };
 	}
+}
 
-	// Sort by descending error rate
-	return result.sort((a, b) => b.errorRate - a.errorRate);
+/**
+ * Migrate an error NDJSON payload into Durable Object SQLite storage.
+ *
+ * @param usageDo - Durable Object namespace
+ * @param userId - User identifier (Bearer token)
+ * @param body - NDJSON string containing error records
+ * @param startline - Optional starting line number (1-based) to process
+ * @param endline - Optional ending line number (1-based) to process
+ * @returns MigrateResult containing counts of inserted, duplicates, created keys, and updated keys
+ */
+export async function migrateErrorNdjson(
+	usageDo: DurableObjectNamespace,
+	userId: string,
+	body: string,
+	startline?: number,
+	endline?: number,
+): Promise<MigrateResult> {
+	try {
+		const stub = await getUsageStub(usageDo, userId);
+		return await stub.migrateErrorNdjson(body, startline, endline);
+	} catch (e) {
+		console.error("[usage-db] Failed to migrate errors:", e);
+		return { ok: false, inserted: 0, duplicates: 0, "created-keys": 0, "updated-keys": 0 };
+	}
 }
 
 /**
  * Delete all usage and error records for a user.
- * Compatible with KeypoolUsageDb.purge()
- * 
- * @param kv - Cloudflare KV namespace for data storage
+ * Uses Durable Object SQLite storage.
+ *
+ * @param usageDo - Durable Object namespace
  * @param userId - User identifier (Bearer token)
  * @returns Total number of bytes freed by deletion
  */
 export async function purge(
-	kv: KVNamespace,
+	usageDo: DurableObjectNamespace,
 	userId: string,
 ): Promise<number> {
-	let freed = 0;
-
 	try {
-		// Delete all usage records (new format: usage:{userId}:YYYY-MM-DDTHH:00)
-		const usageList = await kv.list({
-			prefix: `usage:${userId}:`,
-			limit: MAX_RECORDS_PER_QUERY,
-		});
-
-		for (const kvKey of usageList.keys) {
-			const value = await kv.get(kvKey.name);
-			if (value) freed += value.length;
-			await kv.delete(kvKey.name);
-		}
-
-		// Delete all error records (new format: errors:{userId}:YYYY-MM-DDTHH:00)
-		const errorList = await kv.list({
-			prefix: `errors:${userId}:`,
-			limit: MAX_RECORDS_PER_QUERY,
-		});
-
-		for (const kvKey of errorList.keys) {
-			const value = await kv.get(kvKey.name);
-			if (value) freed += value.length;
-			await kv.delete(kvKey.name);
-		}
+		const stub = await getUsageStub(usageDo, userId);
+		return await stub.purge();
 	} catch (e) {
 		console.error("[usage-db] Failed to purge:", e);
+		return 0;
 	}
-
-	return freed;
 }
 
 /**
  * Get the total size of usage/error records for a user.
- * Compatible with KeypoolUsageDb.getFileSizeBytes()
- * 
- * @param kv - Cloudflare KV namespace for data storage	
+ * Uses Durable Object SQLite storage.
+ *
+ * @param usageDo - Durable Object namespace
  * @param userId - User identifier (Bearer token)
- * @returns Total size in bytes of all usage and error records for the user	
+ * @returns Total size in bytes of all usage and error records for the user
  */
 export async function getFileSizeBytes(
-	kv: KVNamespace,
+	usageDo: DurableObjectNamespace,
 	userId: string,
 ): Promise<number> {
-	let total = 0;
-
 	try {
-		// Get usage records (new format: usage:{userId}:YYYY-MM-DDTHH:00)
-		const usageList = await kv.list({
-			prefix: `usage:${userId}:`,
-			limit: MAX_RECORDS_PER_QUERY,
-		});
-
-		for (const kvKey of usageList.keys) {
-			const value = await kv.get(kvKey.name);
-			if (value) total += value.length;
-		}
-
-		// Get error records (new format: errors:{userId}:YYYY-MM-DDTHH:00)
-		const errorList = await kv.list({
-			prefix: `errors:${userId}:`,
-			limit: MAX_RECORDS_PER_QUERY,
-		});
-
-		for (const kvKey of errorList.keys) {
-			const value = await kv.get(kvKey.name);
-			if (value) total += value.length;
-		}
+		const stub = await getUsageStub(usageDo, userId);
+		return await stub.getFileSizeBytes();
 	} catch (e) {
 		console.error("[usage-db] Failed to get file size:", e);
+		return 0;
 	}
-
-	return total;
 }

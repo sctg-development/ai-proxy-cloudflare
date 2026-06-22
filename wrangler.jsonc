@@ -25,6 +25,21 @@
             "id": "0f6936bc4d9b4d5fa1cc85acd757e354"
         }
     ],
+    // ── Durable Objects for Usage DB ──────────────────────────────────────
+    "durable_objects": {
+        "bindings": [
+            {
+                "name": "USAGE_DO",
+                "class_name": "UsageDbDurableObject"
+            }
+        ]
+    },
+    "migrations": [
+        {
+            "tag": "v1_usage_do_sqlite",
+            "new_sqlite_classes": ["UsageDbDurableObject"]
+        }
+    ],
     // ── Rate limiting via Durable Objects ──────────────────────────────────
     "ratelimits": [
         {

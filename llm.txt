@@ -1,0 +1,4 @@
+@sctg/sdk — source index (2026-06-22)
+Stack: @sctg/sdk with name @sctg/cline-sdk
+
+FILES

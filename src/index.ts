@@ -44,6 +44,7 @@ import {
 	type KeyUsageEntry,
 	type KeyErrorEntry,
 	type UsagePeriod,
+	UsageDbDurableObject,
 } from "./lib/usage-db";
 
 /**
@@ -54,6 +55,7 @@ const AI_JSON_ENC_KV_KEY = "vault:ai.json.enc";
 declare global {
 	interface Env {
 		KV_AI_PROXY: KVNamespace;
+		USAGE_DO: DurableObjectNamespace;
 		PROXY_RATE_LIMITER: RateLimit;
 		CLOUDFLARE_ACCOUNT_ID: string;
 		AI_JSON_CRYPTOKEN: string;
@@ -456,6 +458,13 @@ export async function isKeypoolAuthValid(c: any, token: string | null, _env: Env
  *
  * Record a successful API key usage event.
  * Requires a valid user Bearer token.
+ * 
+ * ```bash
+ * curl -X POST "https://your-worker-url/v1/keypool/usage" \
+ *      -H "Authorization: Bearer <user-token>" \
+ *      -H "Content-Type: application/json" \
+ *      -d '{"ts":1782109837012,"provider":"poolside","modelId":"poolside/laguna-xs.2","keyOwner":"weblate@gmail.com","keyHint":"***FQmLTtAu","promptTokens":1716,"completionTokens":354}'
+ * ```
  */
 app.post("/v1/keypool/usage", async (c) => {
 	const env = c.env;
@@ -482,7 +491,7 @@ app.post("/v1/keypool/usage", async (c) => {
 		return c.json({ error: "Missing required fields: provider, modelId, keyOwner, keyHint" }, { status: 400 });
 	}
 
-	await recordUsage(env.KV_AI_PROXY, userId, entry);
+	await recordUsage(env.USAGE_DO, userId, entry);
 	return c.json({ ok: true }, { status: 200 });
 });
 
@@ -517,7 +526,7 @@ app.post("/v1/keypool/error", async (c) => {
 		return c.json({ error: "Missing required fields: provider, modelId, keyOwner, keyHint" }, { status: 400 });
 	}
 
-	await recordError(env.KV_AI_PROXY, userId, entry);
+	await recordError(env.USAGE_DO, userId, entry);
 	return c.json({ ok: true }, { status: 200 });
 });
 
@@ -547,7 +556,7 @@ app.get("/v1/keypool/stats", async (c) => {
 	}
 
 	const period = (c.req.query("period") as UsagePeriod) || "day";
-	const stats = await getUsageStats(env.KV_AI_PROXY, userId, period);
+	const stats = await getUsageStats(env.USAGE_DO, userId, period);
 	return c.json({ object: "list", data: stats });
 });
 
@@ -577,7 +586,7 @@ app.get("/v1/keypool/errors", async (c) => {
 	}
 
 	const period = (c.req.query("period") as UsagePeriod) || "day";
-	const stats = await getErrorStats(env.KV_AI_PROXY, userId, period);
+	const stats = await getErrorStats(env.USAGE_DO, userId, period);
 	return c.json({ object: "list", data: stats });
 });
 
@@ -639,7 +648,7 @@ app.post("/v1/keypool/migrate/usage", async (c) => {
 		return c.json({ error: "startline must be less than or equal to endline" }, { status: 400 });
 	}
 
-	const result = await migrateUsageNdjson(env.KV_AI_PROXY, userId, body, start, end);
+	const result = await migrateUsageNdjson(env.USAGE_DO, userId, body, start, end);
 	return c.json({ ok: true, inserted: result.inserted, duplicates: result.duplicates });
 });
 
@@ -701,7 +710,7 @@ app.post("/v1/keypool/migrate/errors", async (c) => {
 		return c.json({ error: "startline must be less than or equal to endline" }, { status: 400 });
 	}
 
-	const result = await migrateErrorNdjson(env.KV_AI_PROXY, userId, body, start, end);
+	const result = await migrateErrorNdjson(env.USAGE_DO, userId, body, start, end);
 	return c.json({ ok: true, inserted: result.inserted, duplicates: result.duplicates });
 });
 
@@ -729,7 +738,7 @@ app.post("/v1/keypool/purge", async (c) => {
 		return c.json({ error: "Invalid keypool authorization" }, { status: 403 });
 	}
 
-	const freed = await purge(c.env.KV_AI_PROXY, userId);
+	const freed = await purge(c.env.USAGE_DO, userId);
 	return c.json({ ok: true, freedBytes: freed });
 });
 
@@ -752,7 +761,7 @@ app.get("/v1/keypool/size", async (c) => {
 		return c.json({ error: "Invalid keypool authorization" }, { status: 403 });
 	}
 
-	const size = await getFileSizeBytes(env.KV_AI_PROXY, userId);
+	const size = await getFileSizeBytes(env.USAGE_DO, userId);
 	return c.json({ sizeBytes: size });
 });
 
@@ -923,3 +932,4 @@ app.all("*", (c) => {
 });
 
 export default app;
+export { UsageDbDurableObject } from "./lib/usage-db";
