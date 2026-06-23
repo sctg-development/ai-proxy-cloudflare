@@ -764,159 +764,6 @@ app.get("/v1/keypool/size", async (c) => {
 	return c.json({ sizeBytes: size });
 });
 
-/**
- * Main API endpoint — handles both legacy and new request formats.
- * Supports:
- *   - /openai/v1/chat/completions (legacy, with X-Host-Final)
- *   - /v1/chat/completions (legacy, with X-Host-Final)
- *   - /groq/v1/chat/completions (new)
- *   - /sambanova/v1/chat/completions (new)
- *   - etc.
- */
-app.post("*", async (c) => {
-	const env = c.env;
-
-	// Check rate limit
-	const rateLimitResponse = await checkRateLimit(c.req.raw, env);
-	if (rateLimitResponse) return rateLimitResponse;
-
-	try {
-		// Extract and validate authentication
-		const authHeader = c.req.header("Authorization");
-		const bearerToken = extractBearerToken(authHeader || null);
-
-		if (!bearerToken) {
-			return c.json(
-				{ error: "Missing Authorization header" },
-				{ status: 401 },
-			);
-		}
-
-		// Validate user key
-		const username = await validateUserKey(env.KV_AI_PROXY, bearerToken);
-		if (!username) {
-			return c.json(
-				{ error: "Invalid API key" },
-				{ status: 403 },
-			);
-		}
-
-		if (env.DEBUG) {
-			console.log(`User [${username}] validated`);
-		}
-
-		// Enforce AI token balance if Fufuni integration is configured.
-		// When FUFUNI_MERCHANT_URL is unset, balance check is skipped (standalone mode).
-		const balance = await checkBalance(bearerToken, env);
-		if (balance !== null && balance <= 0) {
-			return c.json(
-				{ error: "Insufficient AI token balance. Purchase more tokens at the store." },
-				{ status: 402 },
-			);
-		}
-
-		// Load AI configuration (vault from KV, decrypted with env.AI_JSON_CRYPTOKEN)
-		const config = await getAiConfig(env);
-
-		// Parse request body
-		let payload: any;
-		try {
-			payload = await c.req.json();
-		} catch (err) {
-			return c.json(
-				{ error: "Invalid JSON payload" },
-				{ status: 400 },
-			);
-		}
-
-		// Detect provider from path or X-Host-Final header
-		const pathname = new URL(c.req.url).pathname;
-		const xHostFinal = c.req.header("X-Host-Final");
-		const detected = detectProvider(pathname, xHostFinal || null, config);
-
-		if (!detected) {
-			return c.json(
-				{
-					error: "Unable to determine provider. " +
-						"Use path prefix (/groq/, /sambanova/, /anthropic/, /openai/) " +
-						"or X-Host-Final header for legacy routes.",
-				},
-				{ status: 400 },
-			);
-		}
-
-		const { key: providerKey, provider } = detected;
-
-		if (env.DEBUG) {
-			console.log(`Provider detected: ${providerKey}`);
-		}
-
-		// Validate payload structure
-		if (!payload.model) {
-			return c.json(
-				{ error: "Missing model" },
-				{ status: 400 },
-			);
-		}
-
-		const selectedModel = findProviderModel(provider, String(payload.model));
-		if (!selectedModel) {
-			return c.json(
-				{ error: `Model '${String(payload.model)}' not found for provider '${providerKey}'` },
-				{ status: 404 },
-			);
-		}
-
-		const modelUsage = selectedModel.usage ?? "chat";
-
-		if (modelUsage === "chat") {
-			if (!payload.messages || !Array.isArray(payload.messages)) {
-				return c.json(
-					{ error: "Missing or invalid messages array" },
-					{ status: 400 },
-				);
-			}
-		} else if (modelUsage === "tts") {
-			if (typeof payload.input !== "string" || payload.input.trim().length === 0) {
-				return c.json(
-					{ error: "Missing or invalid input for text-to-speech request" },
-					{ status: 400 },
-				);
-			}
-		} else {
-			return c.json(
-				{ error: `Model usage '${modelUsage}' is not yet supported on this proxy route` },
-				{ status: 400 },
-			);
-		}
-
-		// Forward to Cloudflare AI Gateway
-		const response = await forwardToCfAiGateway(c.req.raw, payload, provider, {
-			accountId: env.CLOUDFLARE_ACCOUNT_ID,
-			aigToken: env.CLOUDFLARE_AIG_TOKEN,
-			providerKey,
-			modelUsage,
-			debug: env.DEBUG === "true",
-		});
-
-		// Deduct 1 token unit from balance after successful request (non-blocking).
-		if (response.status < 400 && balance !== null) {
-			c.executionCtx.waitUntil(deductBalance(bearerToken, 1, env));
-		}
-
-		return response;
-	} catch (err) {
-		console.error("Proxy error:", err);
-		return c.json(
-			{
-				error: "Internal server error",
-				message: err instanceof Error ? err.message : "Unknown error",
-			},
-			{ status: 500 },
-		);
-	}
-});
-
 // ── BYOK Models Endpoints ─────────────────────────────────────────────
 
 /**
@@ -1256,6 +1103,159 @@ app.post("/v1/keypool/byok/models", async (c) => {
 		console.error("Failed to store BYOK configuration:", err);
 		return c.json(
 			{ error: "Failed to store BYOK configuration", message: err instanceof Error ? err.message : String(err) },
+			{ status: 500 },
+		);
+	}
+});
+
+/**
+ * Main API endpoint — handles both legacy and new request formats.
+ * Supports:
+ *   - /openai/v1/chat/completions (legacy, with X-Host-Final)
+ *   - /v1/chat/completions (legacy, with X-Host-Final)
+ *   - /groq/v1/chat/completions (new)
+ *   - /sambanova/v1/chat/completions (new)
+ *   - etc.
+ */
+app.post("*", async (c) => {
+	const env = c.env;
+
+	// Check rate limit
+	const rateLimitResponse = await checkRateLimit(c.req.raw, env);
+	if (rateLimitResponse) return rateLimitResponse;
+
+	try {
+		// Extract and validate authentication
+		const authHeader = c.req.header("Authorization");
+		const bearerToken = extractBearerToken(authHeader || null);
+
+		if (!bearerToken) {
+			return c.json(
+				{ error: "Missing Authorization header" },
+				{ status: 401 },
+			);
+		}
+
+		// Validate user key
+		const username = await validateUserKey(env.KV_AI_PROXY, bearerToken);
+		if (!username) {
+			return c.json(
+				{ error: "Invalid API key" },
+				{ status: 403 },
+			);
+		}
+
+		if (env.DEBUG) {
+			console.log(`User [${username}] validated`);
+		}
+
+		// Enforce AI token balance if Fufuni integration is configured.
+		// When FUFUNI_MERCHANT_URL is unset, balance check is skipped (standalone mode).
+		const balance = await checkBalance(bearerToken, env);
+		if (balance !== null && balance <= 0) {
+			return c.json(
+				{ error: "Insufficient AI token balance. Purchase more tokens at the store." },
+				{ status: 402 },
+			);
+		}
+
+		// Load AI configuration (vault from KV, decrypted with env.AI_JSON_CRYPTOKEN)
+		const config = await getAiConfig(env);
+
+		// Parse request body
+		let payload: any;
+		try {
+			payload = await c.req.json();
+		} catch (err) {
+			return c.json(
+				{ error: "Invalid JSON payload" },
+				{ status: 400 },
+			);
+		}
+
+		// Detect provider from path or X-Host-Final header
+		const pathname = new URL(c.req.url).pathname;
+		const xHostFinal = c.req.header("X-Host-Final");
+		const detected = detectProvider(pathname, xHostFinal || null, config);
+
+		if (!detected) {
+			return c.json(
+				{
+					error: "Unable to determine provider. " +
+						"Use path prefix (/groq/, /sambanova/, /anthropic/, /openai/) " +
+						"or X-Host-Final header for legacy routes.",
+				},
+				{ status: 400 },
+			);
+		}
+
+		const { key: providerKey, provider } = detected;
+
+		if (env.DEBUG) {
+			console.log(`Provider detected: ${providerKey}`);
+		}
+
+		// Validate payload structure
+		if (!payload.model) {
+			return c.json(
+				{ error: "Missing model" },
+				{ status: 400 },
+			);
+		}
+
+		const selectedModel = findProviderModel(provider, String(payload.model));
+		if (!selectedModel) {
+			return c.json(
+				{ error: `Model '${String(payload.model)}' not found for provider '${providerKey}'` },
+				{ status: 404 },
+			);
+		}
+
+		const modelUsage = selectedModel.usage ?? "chat";
+
+		if (modelUsage === "chat") {
+			if (!payload.messages || !Array.isArray(payload.messages)) {
+				return c.json(
+					{ error: "Missing or invalid messages array" },
+					{ status: 400 },
+				);
+			}
+		} else if (modelUsage === "tts") {
+			if (typeof payload.input !== "string" || payload.input.trim().length === 0) {
+				return c.json(
+					{ error: "Missing or invalid input for text-to-speech request" },
+					{ status: 400 },
+				);
+			}
+		} else {
+			return c.json(
+				{ error: `Model usage '${modelUsage}' is not yet supported on this proxy route` },
+				{ status: 400 },
+			);
+		}
+
+		// Forward to Cloudflare AI Gateway
+		const response = await forwardToCfAiGateway(c.req.raw, payload, provider, {
+			accountId: env.CLOUDFLARE_ACCOUNT_ID,
+			aigToken: env.CLOUDFLARE_AIG_TOKEN,
+			providerKey,
+			modelUsage,
+			debug: env.DEBUG === "true",
+		});
+
+		// Deduct 1 token unit from balance after successful request (non-blocking).
+		if (response.status < 400 && balance !== null) {
+			c.executionCtx.waitUntil(deductBalance(bearerToken, 1, env));
+		}
+
+		return response;
+	} catch (err) {
+		console.error("Proxy error:", err);
+		return c.json(
+			{
+				error: "Internal server error",
+				message: err instanceof Error ? err.message : "Unknown error",
+			},
 			{ status: 500 },
 		);
 	}
