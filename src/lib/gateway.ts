@@ -18,7 +18,7 @@
 //
 // Forward requests to Cloudflare AI Gateway
 
-import type { AiConfig, AiModel, AiProvider } from './ai-enc';
+import type { AiConfig, AiModel, AiProvider } from '../types/ai-config';
 import { resolveProviderEndpoint, resolveModelId, pickKey } from './ai-enc';
 
 export interface GatewayForwardRequest {

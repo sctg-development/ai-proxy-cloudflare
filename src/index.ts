@@ -27,7 +27,7 @@ import { Hono } from "hono";
 import { logger } from "hono/logger";
 import { cors } from "hono/cors";
 
-import { decryptAiConfig, type AiConfig, type AiModel } from "./lib/ai-enc";
+import { decryptAiConfig } from "./lib/ai-enc";
 import { validateUserKey, extractBearerToken } from "./lib/auth";
 import { forwardToCfAiGateway, detectProvider } from "./lib/gateway";
 import { checkBalance, deductBalance } from "./lib/balance";
@@ -44,9 +44,8 @@ import {
 	type KeyUsageEntry,
 	type KeyErrorEntry,
 	type UsagePeriod,
-	UsageDbDurableObject,
 } from "./lib/usage-db";
-
+import type { AiConfig, AiKey, AiModel, AiProvider } from "./types/ai-config";
 /**
  * KV key where the encrypted AI provider configuration is stored.
  */
@@ -913,6 +912,350 @@ app.post("*", async (c) => {
 				error: "Internal server error",
 				message: err instanceof Error ? err.message : "Unknown error",
 			},
+			{ status: 500 },
+		);
+	}
+});
+
+// ── BYOK Models Endpoints ─────────────────────────────────────────────
+
+/**
+ * KV key where the BYOK (Bring Your Own Key) configuration is stored.
+ */
+const BYOK_KV_KEY = "vault:byok";
+
+/**
+ * GET /v1/keypool/byok/models
+ *
+ * Returns the BYOK configuration stored in KV.
+ * Requires Bearer token authentication matching AI_JSON_CRYPTOKEN.
+ * Returns 404 if no configuration exists, 403 if unauthorized.
+ */
+app.get("/v1/keypool/byok/models", async (c) => {
+	// Validate Bearer token against the configured crypto token
+	const authHeader = c.req.header("Authorization");
+	if (!isCryptoTokenValid(authHeader || null, c.env.AI_JSON_CRYPTOKEN)) {
+		return c.json({ error: "Unauthorized" }, { status: 403 });
+	}
+
+	try {
+		// Retrieve the BYOK configuration from KV as JSON
+		const byokData = await c.env.KV_AI_PROXY.get(BYOK_KV_KEY, "json");
+		if (!byokData) {
+			// No configuration has been stored yet
+			return c.json({ error: "BYOK configuration not found" }, { status: 404 });
+		}
+		// Return the stored configuration
+		return c.json(byokData);
+	} catch (err) {
+		// Log and return any unexpected errors
+		console.error("Failed to retrieve BYOK configuration:", err);
+		return c.json(
+			{ error: "Failed to retrieve BYOK configuration", message: err instanceof Error ? err.message : String(err) },
+			{ status: 500 },
+		);
+	}
+});
+
+/**
+ * POST /v1/keypool/byok/models
+ *
+ * Stores the BYOK configuration in KV.
+ * Requires Bearer token authentication matching AI_JSON_CRYPTOKEN.
+ * Validates that the payload conforms to AiConfig type.
+ */
+app.post("/v1/keypool/byok/models", async (c) => {
+	// Validate Bearer token against the configured crypto token
+	const authHeader = c.req.header("Authorization");
+	if (!isCryptoTokenValid(authHeader || null, c.env.AI_JSON_CRYPTOKEN)) {
+		return c.json({ error: "Unauthorized" }, { status: 403 });
+	}
+
+	let payload: AiConfig;
+	try {
+		// Parse the request body as JSON
+		payload = await c.req.json();
+	} catch {
+		return c.json({ error: "Invalid JSON payload" }, { status: 400 });
+	}
+
+	// Validate AiConfig structure - check top-level required fields
+	if (!payload || typeof payload !== "object") {
+		return c.json({ error: "Invalid payload: must be an object" }, { status: 400 });
+	}
+
+	if (typeof payload.version !== "number") {
+		return c.json({ error: "Invalid payload: 'version' must be a number" }, { status: 400 });
+	}
+
+	if (!payload.providers || typeof payload.providers !== "object") {
+		return c.json({ error: "Invalid payload: 'providers' must be an object" }, { status: 400 });
+	}
+
+	if (!payload.crawlers || typeof payload.crawlers !== "object") {
+		return c.json({ error: "Invalid payload: 'crawlers' must be an object" }, { status: 400 });
+	}
+
+	// Validate each provider in the configuration
+	for (const [providerId, provider] of Object.entries(payload.providers)) {
+		// Check provider is a valid object
+		if (!provider || typeof provider !== "object") {
+			return c.json({ error: `Invalid provider '${providerId}': must be an object` }, { status: 400 });
+		}
+		// Validate required provider fields
+		if (!provider.protocol || typeof provider.protocol !== "string") {
+			return c.json({ error: `Invalid provider '${providerId}': 'protocol' must be a string` }, { status: 400 });
+		}
+		if (!provider.endpoint || typeof provider.endpoint !== "string") {
+			return c.json({ error: `Invalid provider '${providerId}': 'endpoint' must be a string` }, { status: 400 });
+		}
+		if (!Array.isArray(provider.keys)) {
+			return c.json({ error: `Invalid provider '${providerId}': 'keys' must be an array` }, { status: 400 });
+		}
+		if (!Array.isArray(provider.models)) {
+			return c.json({ error: `Invalid provider '${providerId}': 'models' must be an array` }, { status: 400 });
+		}
+
+		// Validate each API key in the provider
+		for (let i = 0; i < provider.keys.length; i++) {
+			const key = provider.keys[i];
+			if (!key || typeof key !== "object") {
+				return c.json({ error: `Invalid key at index ${i} in provider '${providerId}': must be an object` }, { status: 400 });
+			}
+			if (!key.key || typeof key.key !== "string") {
+				return c.json({ error: `Invalid key at index ${i} in provider '${providerId}': 'key' must be a string` }, { status: 400 });
+			}
+		}
+
+		// Validate each model in the provider
+		for (let i = 0; i < provider.models.length; i++) {
+			const model = provider.models[i];
+			if (!model || typeof model !== "object") {
+				return c.json({ error: `Invalid model at index ${i} in provider '${providerId}': must be an object` }, { status: 400 });
+			}
+			// Validate required model fields
+			if (!model.id || typeof model.id !== "string") {
+				return c.json({ error: `Invalid model at index ${i} in provider '${providerId}': 'id' must be a string` }, { status: 400 });
+			}
+			if (!model.usage || typeof model.usage !== "string") {
+				return c.json({ error: `Invalid model at index ${i} in provider '${providerId}': 'usage' must be a string` }, { status: 400 });
+			}
+			if (typeof model.contextWindow !== "number") {
+				return c.json({ error: `Invalid model at index ${i} in provider '${providerId}': 'contextWindow' must be a number` }, { status: 400 });
+			}
+			if (typeof model.maxOutputTokens !== "number") {
+				return c.json({ error: `Invalid model at index ${i} in provider '${providerId}': 'maxOutputTokens' must be a number` }, { status: 400 });
+			}
+			if (model.tpmLimit !== undefined && model.tpmLimit !== null && typeof model.tpmLimit !== "number") {
+				return c.json({ error: `Invalid model at index ${i} in provider '${providerId}': 'tpmLimit' must be a number or null` }, { status: 400 });
+			}
+			if (typeof model.priority !== "number") {
+				return c.json({ error: `Invalid model at index ${i} in provider '${providerId}': 'priority' must be a number` }, { status: 400 });
+			}
+		}
+	}
+
+	// Validate each crawler in the configuration
+	for (const [crawlerId, crawler] of Object.entries(payload.crawlers)) {
+		// Check crawler is a valid object
+		if (!crawler || typeof crawler !== "object") {
+			return c.json({ error: `Invalid crawler '${crawlerId}': must be an object` }, { status: 400 });
+		}
+		// Validate required crawler fields
+		if (!crawler.protocol || typeof crawler.protocol !== "string") {
+			return c.json({ error: `Invalid crawler '${crawlerId}': 'protocol' must be a string` }, { status: 400 });
+		}
+		if (!crawler.endpoint || typeof crawler.endpoint !== "string") {
+			return c.json({ error: `Invalid crawler '${crawlerId}': 'endpoint' must be a string` }, { status: 400 });
+		}
+		if (!Array.isArray(crawler.keys)) {
+			return c.json({ error: `Invalid crawler '${crawlerId}': 'keys' must be an array` }, { status: 400 });
+		}
+
+		// Validate each API key in the crawler
+		for (let i = 0; i < crawler.keys.length; i++) {
+			const key = crawler.keys[i];
+			if (!key || typeof key !== "object") {
+				return c.json({ error: `Invalid key at index ${i} in crawler '${crawlerId}': must be an object` }, { status: 400 });
+			}
+			if (!key.key || typeof key.key !== "string") {
+				return c.json({ error: `Invalid key at index ${i} in crawler '${crawlerId}': 'key' must be a string` }, { status: 400 });
+			}
+		}
+	}
+
+	// Store the validated configuration in KV
+	try {
+		await c.env.KV_AI_PROXY.put(BYOK_KV_KEY, JSON.stringify(payload));
+		return c.json({ ok: true, message: "BYOK configuration stored" }, { status: 200 });
+	} catch (err) {
+		// Log and return any storage errors
+		console.error("Failed to store BYOK configuration:", err);
+		return c.json(
+			{ error: "Failed to store BYOK configuration", message: err instanceof Error ? err.message : String(err) },
+			{ status: 500 },
+		);
+	}
+});
+/**
+ *
+ * Returns the BYOK configuration stored in KV.
+ * Requires Bearer token authentication matching AI_JSON_CRYPTOKEN.
+ * Returns 404 if no configuration exists, 403 if unauthorized.
+ */
+app.get("/v1/keypool/byok/models", async (c) => {
+	// Validate Bearer token against the configured crypto token
+	const authHeader = c.req.header("Authorization");
+	if (!isCryptoTokenValid(authHeader || null, c.env.AI_JSON_CRYPTOKEN)) {
+		return c.json({ error: "Unauthorized" }, { status: 403 });
+	}
+
+	try {
+		// Retrieve the BYOK configuration from KV as JSON
+		const byokData = await c.env.KV_AI_PROXY.get(BYOK_KV_KEY, "json");
+		if (!byokData) {
+			// No configuration has been stored yet
+			return c.json({ error: "BYOK configuration not found" }, { status: 404 });
+		}
+		// Return the stored configuration
+		return c.json(byokData);
+	} catch (err) {
+		// Log and return any unexpected errors
+		console.error("Failed to retrieve BYOK configuration:", err);
+		return c.json(
+			{ error: "Failed to retrieve BYOK configuration", message: err instanceof Error ? err.message : String(err) },
+			{ status: 500 },
+		);
+	}
+});
+
+/**
+ * POST /v1/keypool/byok/models
+ *
+ * Stores the BYOK configuration in KV.
+ * Requires Bearer token authentication matching AI_JSON_CRYPTOKEN.
+ * Validates that the payload conforms to AiConfig type.
+ */
+app.post("/v1/keypool/byok/models", async (c) => {
+	const authHeader = c.req.header("Authorization");
+	if (!isCryptoTokenValid(authHeader || null, c.env.AI_JSON_CRYPTOKEN)) {
+		return c.json({ error: "Unauthorized" }, { status: 403 });
+	}
+
+	let payload: AiConfig;
+	try {
+		payload = await c.req.json();
+	} catch {
+		return c.json({ error: "Invalid JSON payload" }, { status: 400 });
+	}
+
+	// Validate AiConfig structure
+	if (!payload || typeof payload !== "object") {
+		return c.json({ error: "Invalid payload: must be an object" }, { status: 400 });
+	}
+
+	if (typeof payload.version !== "number") {
+		return c.json({ error: "Invalid payload: 'version' must be a number" }, { status: 400 });
+	}
+
+	if (!payload.providers || typeof payload.providers !== "object") {
+		return c.json({ error: "Invalid payload: 'providers' must be an object" }, { status: 400 });
+	}
+
+	if (!payload.crawlers || typeof payload.crawlers !== "object") {
+		return c.json({ error: "Invalid payload: 'crawlers' must be an object" }, { status: 400 });
+	}
+
+	// Validate providers structure
+	for (const [providerId, provider] of Object.entries(payload.providers)) {
+		if (!provider || typeof provider !== "object") {
+			return c.json({ error: `Invalid provider '${providerId}': must be an object` }, { status: 400 });
+		}
+		if (!provider.protocol || typeof provider.protocol !== "string") {
+			return c.json({ error: `Invalid provider '${providerId}': 'protocol' must be a string` }, { status: 400 });
+		}
+		if (!provider.endpoint || typeof provider.endpoint !== "string") {
+			return c.json({ error: `Invalid provider '${providerId}': 'endpoint' must be a string` }, { status: 400 });
+		}
+		if (!Array.isArray(provider.keys)) {
+			return c.json({ error: `Invalid provider '${providerId}': 'keys' must be an array` }, { status: 400 });
+		}
+		if (!Array.isArray(provider.models)) {
+			return c.json({ error: `Invalid provider '${providerId}': 'models' must be an array` }, { status: 400 });
+		}
+
+		// Validate each key in the provider
+		for (let i = 0; i < provider.keys.length; i++) {
+			const key = provider.keys[i];
+			if (!key || typeof key !== "object") {
+				return c.json({ error: `Invalid key at index ${i} in provider '${providerId}': must be an object` }, { status: 400 });
+			}
+			if (!key.key || typeof key.key !== "string") {
+				return c.json({ error: `Invalid key at index ${i} in provider '${providerId}': 'key' must be a string` }, { status: 400 });
+			}
+		}
+
+		// Validate each model in the provider
+		for (let i = 0; i < provider.models.length; i++) {
+			const model = provider.models[i];
+			if (!model || typeof model !== "object") {
+				return c.json({ error: `Invalid model at index ${i} in provider '${providerId}': must be an object` }, { status: 400 });
+			}
+			if (!model.id || typeof model.id !== "string") {
+				return c.json({ error: `Invalid model at index ${i} in provider '${providerId}': 'id' must be a string` }, { status: 400 });
+			}
+			if (!model.usage || typeof model.usage !== "string") {
+				return c.json({ error: `Invalid model at index ${i} in provider '${providerId}': 'usage' must be a string` }, { status: 400 });
+			}
+			if (typeof model.contextWindow !== "number") {
+				return c.json({ error: `Invalid model at index ${i} in provider '${providerId}': 'contextWindow' must be a number` }, { status: 400 });
+			}
+			if (typeof model.maxOutputTokens !== "number") {
+				return c.json({ error: `Invalid model at index ${i} in provider '${providerId}': 'maxOutputTokens' must be a number` }, { status: 400 });
+			}
+			if (model.tpmLimit !== undefined && model.tpmLimit !== null && typeof model.tpmLimit !== "number") {
+				return c.json({ error: `Invalid model at index ${i} in provider '${providerId}': 'tpmLimit' must be a number or null` }, { status: 400 });
+			}
+			if (typeof model.priority !== "number") {
+				return c.json({ error: `Invalid model at index ${i} in provider '${providerId}': 'priority' must be a number` }, { status: 400 });
+			}
+		}
+	}
+
+	// Validate crawlers structure
+	for (const [crawlerId, crawler] of Object.entries(payload.crawlers)) {
+		if (!crawler || typeof crawler !== "object") {
+			return c.json({ error: `Invalid crawler '${crawlerId}': must be an object` }, { status: 400 });
+		}
+		if (!crawler.protocol || typeof crawler.protocol !== "string") {
+			return c.json({ error: `Invalid crawler '${crawlerId}': 'protocol' must be a string` }, { status: 400 });
+		}
+		if (!crawler.endpoint || typeof crawler.endpoint !== "string") {
+			return c.json({ error: `Invalid crawler '${crawlerId}': 'endpoint' must be a string` }, { status: 400 });
+		}
+		if (!Array.isArray(crawler.keys)) {
+			return c.json({ error: `Invalid crawler '${crawlerId}': 'keys' must be an array` }, { status: 400 });
+		}
+
+		// Validate each key in the crawler
+		for (let i = 0; i < crawler.keys.length; i++) {
+			const key = crawler.keys[i];
+			if (!key || typeof key !== "object") {
+				return c.json({ error: `Invalid key at index ${i} in crawler '${crawlerId}': must be an object` }, { status: 400 });
+			}
+			if (!key.key || typeof key.key !== "string") {
+				return c.json({ error: `Invalid key at index ${i} in crawler '${crawlerId}': 'key' must be a string` }, { status: 400 });
+			}
+		}
+	}
+
+	try {
+		await c.env.KV_AI_PROXY.put(BYOK_KV_KEY, JSON.stringify(payload));
+		return c.json({ ok: true, message: "BYOK configuration stored" }, { status: 200 });
+	} catch (err) {
+		console.error("Failed to store BYOK configuration:", err);
+		return c.json(
+			{ error: "Failed to store BYOK configuration", message: err instanceof Error ? err.message : String(err) },
 			{ status: 500 },
 		);
 	}

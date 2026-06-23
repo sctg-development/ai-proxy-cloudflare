@@ -19,52 +19,7 @@
 // AI configuration decryption utility
 // Decrypts ai.json.enc using Web Crypto API (Node.js ≥18 & Cloudflare Workers)
 
-export type AiProtocol =
-  | 'openai'
-  | 'groq'
-  | 'sambanova'
-  | 'anthropic'
-  | 'gemini'
-  | 'mistral'
-  | 'openrouter'
-  | 'morph';
-
-export interface AiKey {
-  key: string;
-  owner?: string;
-  type?: 'expired' | 'free' | 'paid' | 'premium' | 'unlimited';
-}
-
-export interface AiModel {
-  id: string;
-  usage?: 'chat' | 'embedding' | 'transcription' | 'tts' | 'image-generation';
-  contextWindow: number;
-  maxOutputTokens: number;
-  tpmLimit: number | null;
-  priority: number;
-  tags?: string[];
-  gatewayPrefix?: string;
-  supportsImages?: boolean;
-  supportsPromptCache?: boolean;
-  supportsTools?: boolean;
-  supportsReasoning?: boolean;
-}
-
-export interface AiProvider {
-  protocol: AiProtocol;
-  endpoint: string;
-  gatewayEndpoint?: string;
-  gatewayModelPrefix?: string;
-  gatewayKey?: string;
-  modelCardEndpoint?: string;
-  keys: AiKey[];
-  models: AiModel[];
-}
-
-export interface AiConfig {
-  version: number;
-  providers: Record<string, AiProvider>;
-}
+import type { AiConfig, AiKey, AiModel, AiProvider } from '../types/ai-config'; 
 
 /**
  * Decrypt ai.json.enc encrypted with:
