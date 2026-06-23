@@ -56,6 +56,7 @@ import { PlaygroundPanel } from './playground-panel';
 import { ProviderCard } from './ui/ProviderCard';
 import { CrawlerCard } from './ui/CrawlerCard';
 import { ConfigModal } from './ui/ConfigModal';
+import { ApiService } from '../lib/api';
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 /**
@@ -112,6 +113,12 @@ export const Dashboard: React.FC = () => {
 
   /** Per-provider list of available model IDs from the last API refresh. */
   const [availableModelIds, setAvailableModelIds] = useState<Record<string, string[]>>({});
+
+  /** Set of model IDs that are available for BYOK. */
+  const [byokModelIds, setByokModelIds] = useState<Set<string>>(new Set());
+
+  /** Set of crawler IDs that are available for BYOK. */
+  const [byokCrawlerIds, setByokCrawlerIds] = useState<Set<string>>(new Set());
 
   /**
    * Controlled open/close state for the config modal.
@@ -186,6 +193,66 @@ export const Dashboard: React.FC = () => {
     setHasUnsavedChanges(false);
     modalState.close();
     setEditTarget(null);
+  };
+
+  /**
+   * Saves the BYOK configuration to the Worker.
+   * Creates an AiConfig with only the BYOK-enabled models and crawlers, with empty key arrays.
+   */
+  const saveByokConfig = async () => {
+    if (!activeConfig) return;
+
+    try {
+      // Create a BYOK config with only the selected models and crawlers
+      const byokConfig: AiConfig = {
+        version: activeConfig.version,
+        providers: {},
+        crawlers: {},
+      };
+
+      // Add providers that have BYOK-enabled models
+      for (const [providerId, provider] of Object.entries(activeConfig.providers)) {
+        const byokModels = provider.models.filter(model => byokModelIds.has(model.id));
+
+        if (byokModels.length > 0) {
+          byokConfig.providers[providerId] = {
+            ...provider,
+            keys: [], // Empty keys for BYOK
+            models: byokModels,
+          };
+        }
+      }
+
+      // Add BYOK-enabled crawlers
+      for (const [crawlerId, crawler] of Object.entries(activeConfig.crawlers)) {
+        if (byokCrawlerIds.has(crawlerId)) {
+          byokConfig.crawlers[crawlerId] = {
+            ...crawler,
+            keys: [], // Empty keys for BYOK
+          };
+        }
+      }
+
+      // Send the BYOK config to the Worker
+      const response = await fetch(`${import.meta.env.VAULT_URL}/v1/keypool/byok/models`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${ApiService.getToken()}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(byokConfig),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || errorData.error || 'Failed to save BYOK config');
+      }
+
+      alert('BYOK configuration saved successfully!');
+    } catch (err) {
+      console.error('BYOK save failed', err);
+      alert(`Failed to save BYOK configuration: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
   };
 
   /**
@@ -564,6 +631,15 @@ export const Dashboard: React.FC = () => {
               Save Vault
             </Button>
             <Button
+              size="sm"
+              variant="secondary"
+              onPress={saveByokConfig}
+              isPending={loading}
+            >
+              <Save className="mr-2 h-4 w-4" />
+              Save BYOK
+            </Button>
+            <Button
               variant={showPlayground ? 'primary' : 'ghost'}
               size="sm"
               onPress={() => setShowPlayground((current) => !current)}
@@ -732,6 +808,15 @@ export const Dashboard: React.FC = () => {
                     onReorderModels={(models) => reorderProviderModels(id, models)}
                     onDeleteMissingModels={(modelIds) => deleteMissingModels(id, modelIds)}
                     availableModelIds={availableModelIds[id]}
+                    onToggleByok={(modelId, isByok) => {
+                      setByokModelIds((prev) => {
+                        const next = new Set(prev);
+                        if (isByok) next.add(modelId);
+                        else next.delete(modelId);
+                        return next;
+                      });
+                    }}
+                    byokModelIds={byokModelIds}
                   />
                 ))}
               </div>
@@ -770,6 +855,15 @@ export const Dashboard: React.FC = () => {
                       })
                     }
                     onDeleteKey={(index) => deleteCrawlerKey(id, index)}
+                    onToggleByok={(isByok) => {
+                      setByokCrawlerIds((prev) => {
+                        const next = new Set(prev);
+                        if (isByok) next.add(id);
+                        else next.delete(id);
+                        return next;
+                      });
+                    }}
+                    isByok={byokCrawlerIds.has(id)}
                   />
                 ))}
               </div>

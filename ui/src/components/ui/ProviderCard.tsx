@@ -72,6 +72,10 @@ interface ProviderCardProps {
   onDeleteMissingModels?: (modelIds: string[]) => void;
   /** List of model IDs that are available from the provider API (used to detect missing models). */
   availableModelIds?: string[];
+  /** Called when the user toggles BYOK availability for a model. */
+  onToggleByok?: (modelId: string, isByok: boolean) => void;
+  /** Set of model IDs that are available for BYOK. */
+  byokModelIds?: Set<string>;
 }
 
 /** Backward-compatible read for legacy snake_case provider field. */
@@ -108,6 +112,8 @@ export const ProviderCard: React.FC<ProviderCardProps> = ({
   onReorderModels,
   onDeleteMissingModels,
   availableModelIds,
+  onToggleByok,
+  byokModelIds,
 }) => {
   const resolvedModelCardEndpoint = getProviderModelCardEndpoint(provider);
   const [visibleKeys, setVisibleKeys] = useState<Set<number>>(new Set());
@@ -272,6 +278,8 @@ export const ProviderCard: React.FC<ProviderCardProps> = ({
               onDeleteModel={onDeleteModel}
               onDeleteSelectedModels={onDeleteSelectedModels}
               onReorderModels={onReorderModels}
+              onToggleByok={onToggleByok || ((modelId, isByok) => {})}
+              byokModelIds={byokModelIds || new Set()}
             />
           </Tabs.Panel>
 

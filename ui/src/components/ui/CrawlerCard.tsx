@@ -51,6 +51,10 @@ interface CrawlerCardProps {
   onEditKey: (index: number) => void;
   /** Called with the array index of the key to delete. */
   onDeleteKey: (index: number) => void;
+  /** Called when the user toggles BYOK availability. */
+  onToggleByok: (isByok: boolean) => void;
+  /** Whether the crawler is available for BYOK. */
+  isByok: boolean;
 }
 
 /**
@@ -64,6 +68,8 @@ export const CrawlerCard: React.FC<CrawlerCardProps> = ({
   onAddKey,
   onEditKey,
   onDeleteKey,
+  onToggleByok,
+  isByok,
 }) => {
   const [creditUsages, setCreditUsages] = useState<CreditUsage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -148,6 +154,19 @@ export const CrawlerCard: React.FC<CrawlerCardProps> = ({
               <Chip size="sm" variant="soft" color="accent">
                 {crawler.protocol}
               </Chip>
+              {/* BYOK checkbox */}
+              <div className="flex items-center gap-1 ml-4">
+                <input
+                  type="checkbox"
+                  checked={isByok}
+                  onChange={(e) => onToggleByok(e.target.checked)}
+                  id={`byok-${id}`}
+                  className="h-4 w-4"
+                />
+                <label htmlFor={`byok-${id}`} className="text-sm text-muted-foreground">
+                  Available for BYOK
+                </label>
+              </div>
             </div>
             <Card.Description className="font-mono text-xs">
               {crawler.endpoint}

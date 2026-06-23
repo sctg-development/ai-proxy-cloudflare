@@ -37,6 +37,10 @@ interface ModelPriorityListProps {
   onDeleteSelectedModels: (ids: string[]) => void;
   /** Stages a new model order and regenerates priorities upstream. */
   onReorderModels: (models: AiModel[]) => void;
+  /** Toggles BYOK availability for a model. */
+  onToggleByok: (modelId: string, isByok: boolean) => void;
+  /** Set of model IDs that are available for BYOK. */
+  byokModelIds: Set<string>;
 }
 
 /**
@@ -55,6 +59,8 @@ export const ModelPriorityList: React.FC<ModelPriorityListProps> = ({
   onDeleteModel,
   onDeleteSelectedModels,
   onReorderModels,
+  onToggleByok,
+  byokModelIds,
 }) => {
   /** Row currently being dragged, stored as an index into `models`. */
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
@@ -147,7 +153,7 @@ export const ModelPriorityList: React.FC<ModelPriorityListProps> = ({
         </Button>
       </div>
       <div
-        className="grid min-w-230 grid-cols-[44px_44px_minmax(260px,1fr)_110px_160px_160px_120px_120px] items-center gap-3 border-b bg-muted/20 px-3 py-2 text-xs font-semibold uppercase text-muted-foreground"
+        className="grid min-w-230 grid-cols-[44px_44px_44px_minmax(260px,1fr)_110px_160px_160px_120px_120px] items-center gap-3 border-b bg-muted/20 px-3 py-2 text-xs font-semibold uppercase text-muted-foreground"
         role="row"
       >
         <span role="columnheader" aria-label="Drag handle" />
@@ -159,6 +165,7 @@ export const ModelPriorityList: React.FC<ModelPriorityListProps> = ({
             aria-label={`Select all ${providerId} models`}
           />
         </span>
+        <span role="columnheader">BYOK</span>
         <span role="columnheader">Model ID</span>
         <span role="columnheader">Usage</span>
         <span role="columnheader">Context</span>
@@ -196,7 +203,7 @@ export const ModelPriorityList: React.FC<ModelPriorityListProps> = ({
               setDropIndex(null);
             }}
             className={[
-              'grid min-w-230 grid-cols-[44px_44px_minmax(260px,1fr)_110px_160px_160px_120px_120px] items-center gap-3 border-b px-3 py-2 last:border-b-0',
+              'grid min-w-230 grid-cols-[44px_44px_44px_minmax(260px,1fr)_110px_160px_160px_120px_120px] items-center gap-3 border-b px-3 py-2 last:border-b-0',
               'transition-colors',
               draggedIndex === index ? 'bg-muted/30 opacity-70' : '',
               dropIndex === index && draggedIndex !== index ? 'bg-primary/10' : '',
@@ -211,6 +218,15 @@ export const ModelPriorityList: React.FC<ModelPriorityListProps> = ({
                 checked={selectedModelIds.has(model.id)}
                 onChange={() => toggleModelSelection(model.id)}
                 aria-label={`Select model ${model.id}`}
+              />
+            </div>
+            <div role="cell" className="flex h-9 items-center justify-center">
+              <input
+                type="checkbox"
+                checked={byokModelIds.has(model.id)}
+                onChange={(e) => onToggleByok(model.id, e.target.checked)}
+                aria-label={`Available for BYOK ${model.id}`}
+                title="Available for BYOK"
               />
             </div>
             <div role="cell" className="min-w-0 font-medium">
