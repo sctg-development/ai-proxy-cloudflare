@@ -138,6 +138,62 @@ export const Dashboard: React.FC = () => {
     }
   }, [config, hasUnsavedChanges]);
 
+  /**
+   * Load BYOK configuration from the Worker on initial load.
+   */
+  useEffect(() => {
+    const loadByokConfig = async () => {
+      try {
+        const token = ApiService.getToken();
+        if (!token) return;
+
+        const response = await fetch(`${import.meta.env.VAULT_URL}/v1/keypool/byok/models`, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+        });
+
+        if (!response.ok) {
+          // If BYOK config doesn't exist yet, that's fine - start with empty sets
+          if (response.status === 404) {
+            return;
+          }
+          throw new Error(`Failed to load BYOK config: ${response.status}`);
+        }
+
+        const byokConfig: AiConfig = await response.json();
+
+        // Initialize BYOK model IDs from the loaded config
+        const initialByokModelIds = new Set<string>();
+        for (const provider of Object.values(byokConfig.providers || {})) {
+          for (const model of provider.models) {
+            initialByokModelIds.add(model.id);
+          }
+        }
+
+        // Initialize BYOK crawler IDs from the loaded config
+        const initialByokCrawlerIds = new Set<string>();
+        for (const crawlerId of Object.keys(byokConfig.crawlers || {})) {
+          initialByokCrawlerIds.add(crawlerId);
+        }
+
+        setByokModelIds(initialByokModelIds);
+        setByokCrawlerIds(initialByokCrawlerIds);
+
+      } catch (err) {
+        console.error('Failed to load BYOK configuration:', err);
+        // Don't show error to user - BYOK is optional feature
+      }
+    };
+
+    // Only load BYOK config if we have a valid config loaded
+    if (config) {
+      loadByokConfig();
+    }
+  }, [config]);
+
   /** Config currently displayed by the dashboard; falls back during first render after load. */
   const activeConfig = draftConfig ?? config;
 
