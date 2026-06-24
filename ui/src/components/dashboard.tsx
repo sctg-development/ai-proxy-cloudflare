@@ -43,6 +43,7 @@ import {
   Upload,
   Webhook,
   X,
+  Cloud,
 } from 'lucide-react';
 import type { AiConfig, AiModel } from '../types/ai-config';
 import {
@@ -55,6 +56,7 @@ import { validateAiConfigSchema } from '../lib/utils/file-utils';
 import { PlaygroundPanel } from './playground-panel';
 import { ProviderCard } from './ui/ProviderCard';
 import { CrawlerCard } from './ui/CrawlerCard';
+import { WeatherApiCard } from './ui/WeatherApiCard';
 import { ConfigModal } from './ui/ConfigModal';
 import { ApiService } from '../lib/api';
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -68,9 +70,10 @@ import { ApiService } from '../lib/api';
  *   - key: the numeric index in the keys array (as a string)
  */
 interface EditTarget {
-  type: 'provider' | 'model' | 'key' | 'crawler';
+  type: 'provider' | 'model' | 'key' | 'crawler' | 'weatherApi';
   providerId?: string;
   crawlerId?: string;
+  weatherApiId?: string;
   /** Model id or key array index (stringified) when editing an existing item. */
   itemId?: string;
 }
@@ -119,6 +122,10 @@ export const Dashboard: React.FC = () => {
 
   /** Set of crawler IDs that are available for BYOK. */
   const [byokCrawlerIds, setByokCrawlerIds] = useState<Set<string>>(new Set());
+
+  /** Set of weather API IDs that are available for BYOK. */
+  const [byokWeatherApiIds, setByokWeatherApiIds] = useState<Set<string>>(new Set());
+
 
   /**
    * Controlled open/close state for the config modal.
@@ -604,6 +611,36 @@ export const Dashboard: React.FC = () => {
   };
 
   /**
+   * Removes a weather API (and all its keys) from the config.
+   * @param id - The weather API dictionary key.
+   */
+  const deleteWeatherApi = (id: string) => {
+    if (!activeConfig) return;
+    if (!confirm(`Delete weather API "${id}" and all its keys?`)) return;
+
+    // Spread-clone the top level, then delete the weatherApi.
+    const newConfig: AiConfig = JSON.parse(JSON.stringify(activeConfig));
+    delete newConfig.weatherApi;
+    stageConfig(newConfig);
+  };
+
+  /**
+   * Deletes a key from a weather API.
+   * @param weatherApiId - The weather API dictionary key.
+   * @param keyIndex - The index of the key to delete.
+   */
+  const deleteWeatherApiKey = (weatherApiId: string, keyIndex: number) => {
+    if (!activeConfig) return;
+    if (!confirm(`Delete this API key from "${weatherApiId}"?`)) return;
+
+    const newConfig: AiConfig = JSON.parse(JSON.stringify(activeConfig));
+    if (newConfig.weatherApi) {
+      newConfig.weatherApi.keys.splice(keyIndex, 1);
+      stageConfig(newConfig);
+    }
+  };
+
+  /**
    * Deletes a key from a crawler.
    * @param crawlerId - The crawler dictionary key.
    * @param keyIndex - The index of the key to delete.
@@ -800,6 +837,12 @@ export const Dashboard: React.FC = () => {
                     Crawlers
                   </div>
                 </Tabs.Tab>
+                <Tabs.Tab id="weatherApi">
+                  <div className="flex items-center gap-2">
+                    <Cloud className="h-4 w-4" />
+                    Weather APIs
+                  </div>
+                </Tabs.Tab>
               </Tabs.List>
             </Tabs.ListContainer>
 
@@ -922,6 +965,56 @@ export const Dashboard: React.FC = () => {
                     isByok={byokCrawlerIds.has(id)}
                   />
                 ))}
+              </div>
+            </Tabs.Panel>
+
+            <Tabs.Panel id="weatherApi" className="mt-6">
+              <div className="mb-4 flex items-center justify-between">
+                <h2 className="text-lg font-semibold">Weather APIs</h2>
+                <Button
+                  size="sm"
+                  onPress={() => openModal('weatherApi', null)}
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add Weather API
+                </Button>
+              </div>
+
+              <div className="grid gap-6">
+                {activeConfig.weatherApi && (
+                  <WeatherApiCard
+                    key="weatherApi"
+                    id="weatherApi"
+                    weatherApi={activeConfig.weatherApi}
+                    onDelete={() => deleteWeatherApi('weatherApi')}
+                    onEdit={() =>
+                      openModal('weatherApi', { type: 'weatherApi', weatherApiId: 'weatherApi' })
+                    }
+                    onAddKey={() =>
+                      openModal('key', { type: 'key', weatherApiId: 'weatherApi' })
+                    }
+                    onEditKey={(keyIndex: number) =>
+                      openModal('key', {
+                        type: 'key',
+                        weatherApiId: 'weatherApi',
+                        itemId: keyIndex.toString(),
+                      })
+                    }
+                    onDeleteKey={(index: number) => deleteWeatherApiKey('weatherApi', index)}
+                    onToggleByok={(isByok: boolean) => {
+                      setByokWeatherApiIds((prev) => {
+                        const next = new Set(prev);
+                        if (isByok) {
+                          next.add('weatherApi');
+                        } else {
+                          next.delete('weatherApi');
+                        }
+                        return next;
+                      });
+                    }}
+                    isByok={byokWeatherApiIds.has('weatherApi')}
+                  />
+                )}
               </div>
             </Tabs.Panel>
           </Tabs>

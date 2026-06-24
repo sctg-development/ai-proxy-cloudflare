@@ -27,7 +27,7 @@ import {
   useOverlayState,
 } from '@heroui/react';
 import { Save, X } from 'lucide-react';
-import type { AiConfig, AiProtocol, AiProvider, AiModel, AiKey, Crawler, CrawlerProtocol } from '../../types/ai-config';
+import type { AiConfig, AiProtocol, AiProvider, AiModel, AiKey, Crawler, CrawlerProtocol, WeatherApi } from '../../types/ai-config';
 
 /**
  * Identifies the entity being added or edited inside the modal.
@@ -38,9 +38,10 @@ import type { AiConfig, AiProtocol, AiProvider, AiModel, AiKey, Crawler, Crawler
  *   - key: the numeric index in the keys array (as a string)
  */
 interface EditTarget {
-  type: 'provider' | 'model' | 'key' | 'crawler';
+  type: 'provider' | 'model' | 'key' | 'crawler' | 'weatherApi';
   providerId?: string;
   crawlerId?: string;
+  weatherApiId?: string;
   /** Model id or key array index (stringified) when editing an existing item. */
   itemId?: string;
 }
@@ -85,6 +86,13 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({
   const getInitialValue = (fieldName: string): string => {
     if (!editTarget) return '';
 
+    if (type === 'weatherApi' && editTarget.weatherApiId) {
+      const weatherApi = config.weatherApi;
+      if (fieldName === 'id') return editTarget.weatherApiId;
+      // Cast via unknown to safely index by string key — values come from known weatherApi fields.
+      return String(((weatherApi as unknown) as Record<string, unknown>)[fieldName] ?? '');
+    }
+
     if (type === 'crawler' && editTarget.crawlerId) {
       const crawler = config.crawlers[editTarget.crawlerId];
       if (fieldName === 'id') return editTarget.crawlerId;
@@ -123,6 +131,9 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({
       } else if (editTarget.crawlerId) {
         const crawler = config.crawlers[editTarget.crawlerId];
         const apiKey = crawler.keys[Number(editTarget.itemId)];
+        return String((((apiKey as unknown) as Record<string, unknown> | undefined))?.[fieldName] ?? '');
+      } else if (editTarget.weatherApiId && config.weatherApi) {
+        const apiKey = config.weatherApi.keys[Number(editTarget.itemId)];
         return String((((apiKey as unknown) as Record<string, unknown> | undefined))?.[fieldName] ?? '');
       }
     }
@@ -220,11 +231,29 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({
       } else {
         models.push(model);
       }
+    } else if (type === 'weatherApi') {
+      const weatherApiId = data.id;
+      const weatherApiBody: WeatherApi = {
+        protocol: {
+          protocol: data.protocol as 'meteoblue',
+        },
+        endpoint: data.endpoint,
+        // Preserve existing keys when renaming or editing a weatherApi, or initialize empty array for new weatherApis
+        keys: editTarget ? newConfig.weatherApi?.keys || [] : [],
+      };
+
+      // If the weatherApi was renamed (id changed), remove the old entry first.
+      if (editTarget && editTarget.weatherApiId && editTarget.weatherApiId !== weatherApiId) {
+        delete newConfig.weatherApi;
+      }
+      newConfig.weatherApi = weatherApiBody;
     } else if (type === 'key' && editTarget) {
       const apiKey: AiKey = {
         key: data.key,
         owner: data.owner || undefined,
         type: (data.type as AiKey['type']) || undefined,
+        sharedSecret: data.sharedSecret || undefined,
+        signatureType: (data.signatureType as AiKey['signatureType']) || undefined,
       };
 
       // For crawler keys, we need to handle the crawlerId
@@ -239,6 +268,22 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({
       } else if (editTarget.providerId) {
         // For provider keys
         const keys = newConfig.providers[editTarget.providerId].keys;
+        if (editTarget.itemId !== undefined) {
+          // Replace the existing key at the stored array index.
+          keys[Number(editTarget.itemId)] = apiKey;
+        } else {
+          keys.push(apiKey);
+        }
+      } else if (editTarget.weatherApiId) {
+        // For weatherApi keys
+        if (!newConfig.weatherApi) {
+          newConfig.weatherApi = {
+            protocol: { protocol: 'meteoblue' },
+            endpoint: '',
+            keys: [],
+          };
+        }
+        const keys = newConfig.weatherApi.keys;
         if (editTarget.itemId !== undefined) {
           // Replace the existing key at the stored array index.
           keys[Number(editTarget.itemId)] = apiKey;
@@ -508,6 +553,34 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({
                   </>
                 )}
 
+                {/* ── Weather API form ──────────────────────────────────────── */}
+                {type === 'weatherApi' && (
+                  <>
+                    <TextField isRequired name="id" defaultValue={getInitialValue('id')}>
+                      <Label>Unique ID</Label>
+                      <Input placeholder="meteoblue-primary" />
+                    </TextField>
+
+                    <TextField
+                      isRequired
+                      name="protocol"
+                      defaultValue={getInitialValue('protocol')}
+                    >
+                      <Label>Protocol</Label>
+                      <Input placeholder="meteoblue" />
+                    </TextField>
+
+                    <TextField
+                      isRequired
+                      name="endpoint"
+                      defaultValue={getInitialValue('endpoint')}
+                    >
+                      <Label>API Endpoint</Label>
+                      <Input placeholder="https://my-api.meteoblue.com/v1" />
+                    </TextField>
+                  </>
+                )}
+
                 {/* ── API Key form ─────────────────────────────────────── */}
                 {type === 'key' && (
                   <>
@@ -531,6 +604,22 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({
                     >
                       <Label>Key Tier (optional)</Label>
                       <Input placeholder="free, paid, premium, unlimited…" />
+                    </TextField>
+
+                    <TextField
+                      name="sharedSecret"
+                      defaultValue={getInitialValue('sharedSecret')}
+                    >
+                      <Label>Shared Secret (optional)</Label>
+                      <Input type="password" autoComplete="new-password" placeholder="Gateway shared secret" />
+                    </TextField>
+
+                    <TextField
+                      name="signatureType"
+                      defaultValue={getInitialValue('signatureType')}
+                    >
+                      <Label>Signature Type (optional)</Label>
+                      <Input placeholder="hmac-md5, hmac-sha256, hmac-sha512" />
                     </TextField>
                   </>
                 )}

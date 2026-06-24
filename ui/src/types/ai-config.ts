@@ -55,6 +55,10 @@ export interface AiKey {
   owner?: string;
   /** Optional key status/tier */
   type?: 'expired' | 'free' | 'paid' | 'premium' | 'unlimited';
+  /** Optional shared secret for gateway authentication */
+  sharedSecret?: string;
+  /** Optional hash type for the signature */
+  signatureType?: 'hmac-md5' | 'hmac-sha256' | 'hmac-sha512';
 }
 
 /**
@@ -139,6 +143,24 @@ export interface Crawler {
 }
 
 /**
+ * Represents a Weather API protocol.
+ */
+export interface WeatherApiProtocol {
+  /** Protocol used by the Weather API */
+  protocol: 'meteoblue';
+}
+
+/**
+ * Represents a Weather API configuration.
+ */
+export interface WeatherApi { 
+  protocol: WeatherApiProtocol;
+  endpoint: string;
+  keys: AiKey[];
+}
+
+
+/**
  * The root AI configuration object (the "vault").
  */
 export interface AiConfig {
@@ -148,5 +170,7 @@ export interface AiConfig {
   providers: Record<string, AiProvider>;
   /** Dictionary of crawlers keyed by their unique ID */
   crawlers: Record<string, Crawler>;
+  /** Optional Weather API configuration */
+  weatherApi?: WeatherApi;
 }
 

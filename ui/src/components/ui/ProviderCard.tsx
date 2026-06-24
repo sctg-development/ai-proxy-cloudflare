@@ -278,7 +278,7 @@ export const ProviderCard: React.FC<ProviderCardProps> = ({
               onDeleteModel={onDeleteModel}
               onDeleteSelectedModels={onDeleteSelectedModels}
               onReorderModels={onReorderModels}
-              onToggleByok={onToggleByok || ((modelId, isByok) => {})}
+              onToggleByok={onToggleByok || ((_modelId, _isByok) => {})}
               byokModelIds={byokModelIds || new Set()}
             />
           </Tabs.Panel>
