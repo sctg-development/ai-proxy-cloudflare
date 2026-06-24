@@ -929,6 +929,90 @@ app.post("/v1/keypool/byok/models", async (c) => {
 });
 
 /**
+ * ALL /v1/keypool/corsproxy
+ *
+ * CORS proxy endpoint that supports all HTTP methods.
+ * Allows fetching resources from websites that don't send CORS headers.
+ * Requires Bearer token authentication matching AI_JSON_CRYPTOKEN.
+ */
+app.all("/v1/keypool/corsproxy", async (c) => {
+	const authHeader = c.req.header("Authorization");
+	if (!isCryptoTokenValid(authHeader || null, c.env.AI_JSON_CRYPTOKEN)) {
+		return c.json({ error: "Unauthorized" }, { status: 403 });
+	}
+
+	// Extract the target URL from query parameters
+	const targetUrl = c.req.query("url");
+	if (!targetUrl) {
+		return c.json({ error: "Missing 'url' query parameter" }, { status: 400 });
+	}
+
+	try {
+		// Create a new URL object to validate and parse the target URL
+		const url = new URL(targetUrl);
+
+		// Forward the request to the target URL with the same method and headers
+		const init: RequestInit = {
+			method: c.req.method,
+			headers: {
+				"Content-Type": c.req.header("Content-Type") || "application/json",
+				"User-Agent": c.req.header("User-Agent") || "ai-proxy-cors/1.0",
+				"Accept": c.req.header("Accept") || "*/*",
+			} as Record<string, string>,
+		};
+
+		// Forward request body if present (for POST, PUT, PATCH, etc.)
+		if (c.req.method !== "GET" && c.req.method !== "HEAD") {
+			try {
+				init.body = await c.req.text();
+			} catch (err) {
+				// If we can't read the body, proceed without it
+				console.warn("Could not read request body for CORS proxy:", err);
+			}
+		}
+
+		// Make the fetch request
+		const response = await fetch(url.toString(), init);
+
+		// Create a new response with the same status and headers
+		const responseHeaders = new Headers();
+		// Forward safe headers only
+		const safeHeaders = [
+			"content-type", "content-length", "content-disposition",
+			"cache-control", "etag", "last-modified", "expires"
+		];
+
+		response.headers.forEach((value, name) => {
+			if (safeHeaders.includes(name.toLowerCase())) {
+				responseHeaders.set(name, value);
+			}
+		});
+
+		// Add CORS headers to allow cross-origin requests
+		responseHeaders.set("Access-Control-Allow-Origin", "*");
+		responseHeaders.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS");
+		responseHeaders.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
+
+		// Stream the response body
+		return new Response(response.body, {
+			status: response.status,
+			statusText: response.statusText,
+			headers: responseHeaders,
+		});
+
+	} catch (err) {
+		console.error("CORS proxy error:", err);
+		return c.json(
+			{
+				error: "CORS proxy failed",
+				message: err instanceof Error ? err.message : "Unknown error",
+			},
+			{ status: 500 },
+		);
+	}
+});
+
+/**
  * Main API endpoint — handles both legacy and new request formats.
  * Supports:
  *   - /openai/v1/chat/completions (legacy, with X-Host-Final)
