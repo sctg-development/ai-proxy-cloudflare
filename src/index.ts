@@ -1392,15 +1392,29 @@ app.all("*", (c) => {
 // ── Migration routine ───────────────────────────────────────────────────
 
 /**
+ * KV key to track if migration has been executed
+ */
+const MIGRATION_KV_KEY = "migration:ran";
+
+/**
  * Automatic migration routine that runs once when the Worker starts.
  * Creates a default admin user if we're in legacy mode (no users in KV).
  */
 async function runMigration(env: Env): Promise<void> {
   try {
+    // Check if migration has already been executed
+    const migrationDone = await env.KV_AI_PROXY.get(MIGRATION_KV_KEY);
+    if (migrationDone === 'true') {
+      console.log('Migration skipped: already executed.');
+      return;
+    }
+
     // Check if users KV exists and has entries
     const users = await env.KV_AI_PROXY.get('users', 'json');
     if (users && Object.keys(users).length > 0) {
       console.log('Migration skipped: users already exist.');
+      // Mark migration as done even if users exist
+      await env.KV_AI_PROXY.put(MIGRATION_KV_KEY, 'true');
       return;
     }
 
@@ -1408,6 +1422,8 @@ async function runMigration(env: Env): Promise<void> {
     const legacyVault = await env.KV_AI_PROXY.get('vault:ai.json.enc');
     if (!legacyVault) {
       console.log('Migration skipped: no legacy vault found.');
+      // Mark migration as done even if no legacy vault
+      await env.KV_AI_PROXY.put(MIGRATION_KV_KEY, 'true');
       return;
     }
 
@@ -1422,21 +1438,30 @@ async function runMigration(env: Env): Promise<void> {
       }
     };
     await env.KV_AI_PROXY.put('users', JSON.stringify(newUsers));
+    await env.KV_AI_PROXY.put(MIGRATION_KV_KEY, 'true');
     console.log('Migration successful: created admin user with legacy vault.');
   } catch (err) {
     console.error('Migration failed:', err);
   }
 }
 
-// Run migration on startup
-app.use('*', async (c, next) => {
-  // Only run migration once
-  if (!c.env.MIGRATION_RAN) {
-    await runMigration(c.env);
-    c.env.MIGRATION_RAN = true;
+// Run migration on startup - execute immediately when worker loads
+// This ensures migration runs once when the worker starts, not on every request
+try {
+  // Execute migration synchronously on worker startup
+  // Note: In Cloudflare Workers, top-level await is supported
+  const env = {
+    KV_AI_PROXY: (globalThis as any).KV_AI_PROXY,
+    AI_JSON_CRYPTOKEN: (globalThis as any).AI_JSON_CRYPTOKEN
+  } as unknown as Env;
+
+  // Only run if we have the required bindings
+  if (env.KV_AI_PROXY && env.AI_JSON_CRYPTOKEN) {
+    await runMigration(env);
   }
-  await next();
-});
+} catch (err) {
+  console.error('Startup migration failed:', err);
+}
 
 export default app;
 export { UsageDbDurableObject } from "./lib/usage-db";
