@@ -212,6 +212,25 @@ function findProviderModel(provider: AiConfig["providers"][string], modelId: str
 	return provider.models.find((model) => model.id === modelId) ?? null;
 }
 
+// ── Migration on startup ─────────────────────────────────────────────────────
+
+// Run migration on startup - execute immediately when worker loads
+// This ensures migration runs once when the worker starts, not on every request
+try {
+  // Execute migration synchronously on worker startup
+  // Note: In Cloudflare Workers, top-level await is supported
+  const env = {
+    KV_AI_PROXY: (globalThis as any).KV_AI_PROXY,
+    AI_JSON_CRYPTOKEN: (globalThis as any).AI_JSON_CRYPTOKEN
+  } as unknown as Env;
+
+  // Only run if we have the required bindings
+  if (env.KV_AI_PROXY && env.AI_JSON_CRYPTOKEN) {
+    await runMigration(env);
+  }
+} catch (err) {
+  console.error('Startup migration failed:', err);
+}
 // ── Endpoints ─────────────────────────────────────────────────────
 
 /**
@@ -1443,24 +1462,6 @@ async function runMigration(env: Env): Promise<void> {
   } catch (err) {
     console.error('Migration failed:', err);
   }
-}
-
-// Run migration on startup - execute immediately when worker loads
-// This ensures migration runs once when the worker starts, not on every request
-try {
-  // Execute migration synchronously on worker startup
-  // Note: In Cloudflare Workers, top-level await is supported
-  const env = {
-    KV_AI_PROXY: (globalThis as any).KV_AI_PROXY,
-    AI_JSON_CRYPTOKEN: (globalThis as any).AI_JSON_CRYPTOKEN
-  } as unknown as Env;
-
-  // Only run if we have the required bindings
-  if (env.KV_AI_PROXY && env.AI_JSON_CRYPTOKEN) {
-    await runMigration(env);
-  }
-} catch (err) {
-  console.error('Startup migration failed:', err);
 }
 
 export default app;
