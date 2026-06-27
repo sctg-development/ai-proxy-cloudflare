@@ -40,6 +40,7 @@ Options:
   --max-tokens=N          Limit total token count to N (default: unlimited)
   --slim                  Shrink output by stripping comments and blank lines
   --verbose               Show verbose output
+  --include-ui            Include UI files from ui/ directory
 `);
     process.exit(0);
 }
@@ -49,6 +50,7 @@ const maxTokensArg  = args.find((a) => a.startsWith("--max-tokens="));
 const maxTokens     = maxTokensArg ? parseInt(maxTokensArg.split("=")[1]) : Infinity;
 const withIndex     = !args.includes("--no-index");
 const verbose       = args.includes("--verbose");
+const includeUI     = args.includes("--include-ui");
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 /**
@@ -179,15 +181,44 @@ async function main() {
 
     // Define file patterns to include in the export
     const patterns = [
-        "packages/**/*.{ts,tsx,js,jsx,json}",
+        "src/**/*.{ts,tsx,js,jsx,json}",
     ];
     const ignore = [
-        "package.json", "pnpm-lock.yaml", "yarn.lock", "lerna.json",
+        "package.json","package-lock.json", "pnpm-lock.yaml", "yarn.lock", "lerna.json",
         "**/node_modules/**", "**/dist/**", "**/.next/**", "**/*.d.ts",
     ];
 
     // Find all matching files in the project
     const files = await fg(patterns, { cwd: root, absolute: true, onlyFiles: true, ignore });
+
+    // Find UI files if --include-ui flag is set
+    const uiFiles: CodeFile[] = [];
+    if (includeUI) {
+        const uiPatterns = [
+            "ui/**/*.{ts,tsx,js,jsx,css,json}",
+        ];
+        const uiIgnore = [
+            "**/node_modules/**", "**/dist/**", "**/.next/**", "**/*.d.ts",
+        ];
+
+        const uiFilePaths = await fg(uiPatterns, { cwd: root, absolute: true, onlyFiles: true, ignore: uiIgnore });
+
+        for (const abs of uiFilePaths) {
+            const rel = path.relative(root, abs);
+            const ext = path.extname(rel).toLowerCase();
+            const raw = await fs.readFile(abs, "utf8");
+
+            // For UI code files, apply slim mode if requested and extract exports
+            const content = slim ? slimify(raw, ext) : raw;
+            uiFiles.push({
+                rel, content, ext,
+                exports: ext === ".json" ? [] : extractExports(raw),
+            });
+        }
+
+        // Sort UI files alphabetically
+        uiFiles.sort((a, b) => a.rel.localeCompare(b.rel));
+    }
 
     // Define types for different file categories
     type CodeFile = {
@@ -245,6 +276,7 @@ async function main() {
     const allPaths = [
         ...codeFiles.map((f)   => f.rel),
         ...configFiles.map((f) => f.rel),
+        ...uiFiles.map((f)    => f.rel),
     ];
 
     const now = new Date().toISOString().slice(0, 10);
@@ -314,6 +346,35 @@ async function main() {
         }
     }
 
+    // Process and include UI files if --include-ui flag is set
+    if (includeUI && uiFiles.length) {
+        md += "## UI Components\n\n";
+        let tokenCount = estimateTokens(md);
+
+        for (const file of uiFiles) {
+            const lang = languageForExt(file.ext);
+            let section = `### \`${file.rel}\`\n\n`;
+
+            // Add metadata about exports
+            const metaParts: string[] = [];
+            if (file.exports.length)
+                metaParts.push(`**Exports:** ${file.exports.join(", ")}`);
+            if (metaParts.length) section += metaParts.join("  \n") + "\n\n";
+
+            // Add code block with proper language syntax highlighting
+            section += "```" + lang + "\n" + file.content +
+                (file.content.endsWith("\n") ? "" : "\n") + "```\n\n";
+
+            // Check token budget and omit content if necessary
+            const sectionTokens = estimateTokens(section);
+            if (tokenCount + sectionTokens > maxTokens) {
+                section = `### \`${file.rel}\`\n\n> _Omitted: token budget reached (--max-tokens=${maxTokens})._\n\n`;
+            }
+            tokenCount += sectionTokens;
+            md += section;
+        }
+    }
+
     // Write the main markdown output file
     await fs.writeFile(outFile, md, "utf8");
     const totalTokens = estimateTokens(md);
@@ -324,8 +385,7 @@ async function main() {
     // Generate companion index file if requested
     if (withIndex) {
         const indexFile = path.join(path.dirname(outFile), "llm.txt");
-        let idx = `@sctg/sdk — source index (${now})\n`;
-        idx += `Stack: @sctg/sdk with name @sctg/cline-sdk\n\n`;
+        let idx = `ai-proxy-cloudflare — source index (${now})\n`;
         idx += `FILES\n`;
         for (const p of allPaths) idx += `  ${p}\n`;
 
