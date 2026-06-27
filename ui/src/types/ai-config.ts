@@ -159,6 +159,23 @@ export interface WeatherApi {
   keys: AiKey[];
 }
 
+/**
+ * Represents a user record in the users KV store.
+ * This interface supports both legacy and new fields for backward compatibility.
+ */
+export interface UserRecord {
+  /** The actual authentication token (legacy field, required) */
+  key?: string;
+  /** Human-readable owner name (legacy field, optional) */
+  owner?: string;
+  /** Key status (legacy field, optional) */
+  type?: 'expired' | 'free' | 'paid' | 'premium' | 'unlimited';
+  /** New: ID of the vault this user should access (defaults to 'legacy') */
+  vaultId?: string;
+  /** New: Admin or standard user (defaults to 'user') */
+  role?: 'admin' | 'user';
+}
+
 
 /**
  * The root AI configuration object (the "vault").

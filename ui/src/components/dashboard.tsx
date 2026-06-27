@@ -88,7 +88,7 @@ interface EditTarget {
  * it is not lost when the modal unmounts.
  */
 export const Dashboard: React.FC = () => {
-  const { config, loading, error, logout, refresh, updateConfig } = useAi();
+  const { config, loading, error, logout, refresh, updateConfig, userContext } = useAi();
 
   /** Editable copy of the loaded vault. Only this draft is mutated by UI actions. */
   const [draftConfig, setDraftConfig] = useState<AiConfig | null>(null);
@@ -805,6 +805,17 @@ export const Dashboard: React.FC = () => {
           <Alert status="danger" className="mb-6">
             <Alert.Content>
               <Alert.Description>{error}</Alert.Description>
+            </Alert.Content>
+          </Alert>
+        )}
+
+        {/* Role-based access control banner */}
+        {userContext && userContext.role !== 'admin' && (
+          <Alert status="default" className="mb-6">
+            <Alert.Content>
+              <Alert.Description>
+                Read-only mode. You are not an admin.
+              </Alert.Description>
             </Alert.Content>
           </Alert>
         )}

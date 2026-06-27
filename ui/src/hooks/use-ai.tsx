@@ -21,6 +21,16 @@ import { ApiService } from '../lib/api';
 import { encryptVault } from '../lib/crypto';
 
 /**
+ * User context returned by the /v1/auth/me endpoint.
+ */
+interface UserContext {
+  username: string;
+  vaultId: string;
+  role: 'admin' | 'user';
+  isLegacy: boolean;
+}
+
+/**
  * Interface for the AI Context.
  */
 interface AiContextType {
@@ -28,6 +38,7 @@ interface AiContextType {
   loading: boolean;
   error: string | null;
   isAuthenticated: boolean;
+  userContext: UserContext | null;
   login: (token: string) => Promise<void>;
   logout: () => void;
   refresh: () => Promise<void>;
@@ -41,6 +52,7 @@ const AiContext = createContext<AiContextType | undefined>(undefined);
  */
 export const AiProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [config, setConfig] = useState<AiConfig | null>(null);
+  const [userContext, setUserContext] = useState<UserContext | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(!!ApiService.getToken());
@@ -54,6 +66,15 @@ export const AiProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     try {
       const data = await ApiService.fetchConfig();
       setConfig(data);
+
+      // Fetch user context (new)
+      try {
+        const ctx = await ApiService.fetchUserContext();
+        setUserContext(ctx);
+      } catch (userContextError) {
+        // Legacy mode: assume admin for backwards compatibility
+        setUserContext({ username: 'legacy', vaultId: 'legacy', role: 'admin', isLegacy: true });
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');
       if (err instanceof Error && err.message.includes('authorized')) {
@@ -111,7 +132,7 @@ export const AiProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   }, [isAuthenticated, refresh]);
 
   return (
-    <AiContext.Provider value={{ config, loading, error, isAuthenticated, login, logout, refresh, updateConfig }}>
+    <AiContext.Provider value={{ config, loading, error, isAuthenticated, userContext, login, logout, refresh, updateConfig }}>
       {children}
     </AiContext.Provider>
   );

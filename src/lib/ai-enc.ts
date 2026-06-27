@@ -121,3 +121,69 @@ export function selectModel(provider: AiProvider): AiModel {
   return provider.models.sort((a, b) => a.priority - b.priority)[0];
 }
 
+/**
+ * Encrypt a vault configuration using the same algorithm as OpenSSL.
+ * This is the reverse operation of decryptAiConfig.
+ *
+ * @param plaintext - The JSON string to encrypt
+ * @param password - The encryption password
+ * @returns Base64-encoded OpenSSL-compatible ciphertext with "Salted__" header
+ */
+export async function encryptVault(
+  plaintext: string,
+  password: string,
+): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(plaintext);
+  const passwordBytes = encoder.encode(password);
+
+  // Generate random salt
+  const salt = crypto.getRandomValues(new Uint8Array(8));
+
+  // Derive key using PBKDF2 (same parameters as OpenSSL)
+  const baseKey = await crypto.subtle.importKey(
+    'raw',
+    passwordBytes,
+    'PBKDF2',
+    false,
+    ['deriveBits']
+  );
+  const derived = new Uint8Array(
+    await crypto.subtle.deriveBits(
+      { name: 'PBKDF2', hash: 'SHA-256', salt, iterations: 100_000 },
+      baseKey,
+      384 // 32 bytes for key + 16 bytes for IV
+    )
+  );
+
+  // Extract key and IV
+  const key = derived.slice(0, 32);
+  const iv = derived.slice(32, 48);
+
+  // Import AES key and encrypt
+  const aesKey = await crypto.subtle.importKey(
+    'raw',
+    key,
+    'AES-CBC',
+    false,
+    ['encrypt']
+  );
+  const encrypted = await crypto.subtle.encrypt(
+    { name: 'AES-CBC', iv },
+    aesKey,
+    data
+  );
+
+  // Build OpenSSL-compatible format: Salted__ + salt + ciphertext
+  const saltedHeader = encoder.encode('Salted__');
+  const result = new Uint8Array(
+    saltedHeader.length + salt.length + encrypted.byteLength
+  );
+  result.set(saltedHeader, 0);
+  result.set(salt, saltedHeader.length);
+  result.set(new Uint8Array(encrypted), saltedHeader.length + salt.length);
+
+  // Return as Base64
+  return btoa(String.fromCharCode(...result));
+}
+

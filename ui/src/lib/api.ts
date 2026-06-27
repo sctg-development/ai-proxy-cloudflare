@@ -23,6 +23,16 @@ import type { AiConfig } from '../types/ai-config';
 import { decryptAiConfig } from './crypto';
 
 /**
+ * User context returned by the /v1/auth/me endpoint.
+ */
+interface UserContext {
+  username: string;
+  vaultId: string;
+  role: 'admin' | 'user';
+  isLegacy: boolean;
+}
+
+/**
  * Interface for API response errors.
  */
 export interface ApiError {
@@ -90,18 +100,18 @@ export const ApiService = {
 
   /**
    * Update the encrypted vault.
-   * Note: This requires the encrypted payload, which in this UI we assume 
-   * we manage by re-encrypting or the worker handles the encryption logic 
+   * Note: This requires the encrypted payload, which in this UI we assume
+   * we manage by re-encrypting or the worker handles the encryption logic
    * if we send it as plain JSON to a specific endpoint.
-   * 
+   *
    * Looking at src/index.ts, PUT /ai.json.enc EXPECTS an encrypted body.
    * But we don't have the encryption logic in the browser easily without the password.
    * Actually, the password IS the token.
-   * 
+   *
    * WAIT: The worker's GET /ai.json decrypts the KV value using the Bearer token.
-   * So we can download the decrypted JSON, edit it, and then we need to 
+   * So we can download the decrypted JSON, edit it, and then we need to
    * encrypt it back before PUT /ai.json.enc.
-   * 
+   *
    * I should probably add an encryption utility in the UI that matches the worker's logic.
    */
   async updateVault(encryptedVault: string): Promise<void> {
@@ -121,6 +131,29 @@ export const ApiService = {
       const errorData = await response.json() as ApiError;
       throw new Error(errorData.message || errorData.error || 'Failed to update vault');
     }
+  },
+
+  /**
+   * Fetch the current user's context information.
+   * @returns The user context object.
+   * @throws Error if unauthorized or fetch fails.
+   */
+  async fetchUserContext(): Promise<UserContext> {
+    const token = this.getToken();
+    if (!token) throw new Error('No authorization token found');
+
+    const response = await fetch(`${import.meta.env.VAULT_URL}/v1/auth/me`, {
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json() as ApiError;
+      throw new Error(errorData.message || errorData.error || 'Failed to fetch user context');
+    }
+
+    return await response.json() as UserContext;
   },
 
   /**

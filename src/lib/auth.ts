@@ -18,28 +18,68 @@
 //
 // User authentication and key validation
 
-interface UserKey {
-  key: string;
-  owner?: string;
-  type?: 'expired' | 'free' | 'paid' | 'premium' | 'unlimited';
-}
+import { UserRecord } from '../types/ai-config';
 
-interface UserRecord {
-  [username: string]: UserKey;
+/**
+ * User context returned by getUserContext for management endpoints.
+ */
+export interface UserContext {
+  username: string;
+  vaultId: string;
+  role: 'admin' | 'user';
+  isLegacy: boolean;
 }
 
 /**
  * Load user keys from KV or fallback to embedded data.
  */
-export async function loadUserKeys(kv: KVNamespace): Promise<UserRecord> {
+export async function loadUserKeys(kv: KVNamespace): Promise<Record<string, UserRecord>> {
   try {
     const stored = await kv.get('users', 'json');
-    if (stored) return stored as UserRecord;
+    if (stored) return stored as Record<string, UserRecord>;
   } catch (err) {
     console.error('Failed to load users from KV:', err);
   }
   // Fallback: return empty record
   return {};
+}
+
+/**
+ * New function for management endpoints (GET/PUT /ai.json, user management).
+ * Does NOT affect the proxy's `validateUserKey`.
+ */
+export async function getUserContext(
+  kv: KVNamespace,
+  bearerToken: string | null,
+  cryptoToken: string
+): Promise<UserContext | null> {
+  if (!bearerToken) return null;
+
+  const users = await loadUserKeys(kv);
+
+  // 1. Check against 'users' KV first (multi-user mode)
+  for (const [username, record] of Object.entries(users)) {
+    if (record.key === bearerToken) {
+      return {
+        username,
+        vaultId: record.vaultId || 'legacy',
+        role: (record.role as 'admin' | 'user') || 'user',
+        isLegacy: !record.vaultId,
+      };
+    }
+  }
+
+  // 2. Fallback to legacy master token
+  if (bearerToken === cryptoToken) {
+    return {
+      username: 'legacy_admin',
+      vaultId: 'legacy',
+      role: 'admin',
+      isLegacy: true,
+    };
+  }
+
+  return null;
 }
 
 /**

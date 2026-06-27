@@ -27,8 +27,8 @@ import { Hono } from "hono";
 import { logger } from "hono/logger";
 import { cors } from "hono/cors";
 
-import { decryptAiConfig } from "./lib/ai-enc";
-import { validateUserKey, extractBearerToken } from "./lib/auth";
+import { decryptAiConfig, encryptVault } from "./lib/ai-enc";
+import { validateUserKey, extractBearerToken, getUserContext } from "./lib/auth";
 import { forwardToCfAiGateway, detectProvider } from "./lib/gateway";
 import { checkBalance, deductBalance } from "./lib/balance";
 import {
@@ -64,6 +64,8 @@ declare global {
 		FUFUNI_MERCHANT_URL?: string;
 		/** Shared secret for proxy-to-merchant balance API. Optional. */
 		AI_BALANCE_SHARED_SECRET?: string;
+		/** Internal flag to track if migration has run. */
+		MIGRATION_RAN?: boolean;
 	}
 }
 
@@ -74,10 +76,10 @@ type HonoEnv = {
 const app = new Hono<HonoEnv>();
 
 /**
- * In‑memory cache of the decrypted AI configuration.
+ * In‑memory cache of the decrypted AI configurations, keyed by vaultId.
  * Cleared after a successful PUT to force re‑decryption with current vault.
  */
-let cachedConfig: AiConfig | null = null;
+const cachedConfigs = new Map<string, AiConfig>();
 
 // ── Middleware ────────────────────────────────────────────────────────
 
@@ -101,22 +103,56 @@ async function loadEncryptedVault(env: Env): Promise<string> {
 
 /**
  * Obtain the decrypted AI configuration, caching it in memory.
+ * Legacy function that loads the default 'legacy' vault.
+ * Kept for backward compatibility.
  *
  * @param env - Worker environment bindings
  * @returns Decrypted AI configuration object
  * @throws If the vault cannot be read or decryption fails
  */
 async function getAiConfig(env: Env): Promise<AiConfig> {
-	if (cachedConfig) return cachedConfig;
+	return loadAiConfig(env, 'legacy', env.AI_JSON_CRYPTOKEN);
+}
 
-	try {
-		const encryptedConfig = await loadEncryptedVault(env);
-		cachedConfig = await decryptAiConfig(encryptedConfig, env.AI_JSON_CRYPTOKEN);
-		return cachedConfig;
-	} catch (err) {
-		console.error("Failed to decrypt vault:", err);
-		throw new Error("Configuration unavailable");
-	}
+/**
+ * Load a specific AI configuration vault by ID.
+ * Caches decrypted configurations in memory per vaultId.
+ *
+ * @param env - Worker environment bindings
+ * @param vaultId - ID of the vault to load ('legacy' or custom ID)
+ * @param cryptoToken - Token used to decrypt the vault
+ * @returns Decrypted AI configuration object
+ * @throws If the vault cannot be read or decryption fails
+ */
+async function loadAiConfig(
+  env: Env,
+  vaultId: string,
+  cryptoToken: string
+): Promise<AiConfig> {
+  // Check memory cache first
+  const cacheKey = vaultId;
+  if (cachedConfigs.has(cacheKey)) {
+    return cachedConfigs.get(cacheKey)!;
+  }
+
+  let encryptedPayload: string | null;
+
+  if (vaultId === 'legacy') {
+    // Legacy compatibility - load from the original key
+    encryptedPayload = await env.KV_AI_PROXY.get('vault:ai.json.enc');
+  } else {
+    // New multi-vault mode - load from vault:{vaultId}
+    encryptedPayload = await env.KV_AI_PROXY.get(`vault:${vaultId}`);
+  }
+
+  if (!encryptedPayload) {
+    throw new Error(`Vault "${vaultId}" not found in KV`);
+  }
+
+  // Decrypt using the provided token (which is the user's password)
+  const decrypted = await decryptAiConfig(encryptedPayload, cryptoToken);
+  cachedConfigs.set(cacheKey, decrypted);
+  return decrypted;
 }
 
 /**
@@ -203,16 +239,51 @@ app.get("/ai.json.enc", async (c) => {
  * PUT /ai.json.enc
  *
  * Replaces the encrypted vault in KV.
- * Secured with an Authorization: Bearer token that must match
- * the environment variable AI_JSON_CRYPTOKEN.
+ * Secured with role-based access control in multi-user mode.
  *
  * After a successful upload, the in‑memory decrypted configuration cache
  * is cleared so the next proxy request will re‑decrypt with the new vault.
  */
 app.put("/ai.json.enc", async (c) => {
 	const authHeader = c.req.header("Authorization");
-	if (!isCryptoTokenValid(authHeader || null, c.env.AI_JSON_CRYPTOKEN)) {
-		return c.json({ error: "Unauthorized" }, { status: 403 });
+	const token = extractBearerToken(authHeader || null);
+
+	// Step 1: Check if we are in legacy mode (no users in KV)
+	const users = await c.env.KV_AI_PROXY.get('users', 'json');
+	const isLegacyMode = !users || Object.keys(users).length === 0;
+
+	// If legacy mode, keep the old behavior
+	if (isLegacyMode) {
+		if (!isCryptoTokenValid(authHeader || null, c.env.AI_JSON_CRYPTOKEN)) {
+			return c.json({ error: "Unauthorized" }, { status: 403 });
+		}
+
+		try {
+			const body = await c.req.text();
+			if (!body || body.trim().length === 0) {
+				return c.json({ error: "Empty body" }, { status: 400 });
+			}
+
+			await c.env.KV_AI_PROXY.put(AI_JSON_ENC_KV_KEY, body);
+			cachedConfigs.delete('legacy');
+
+			return c.json({ ok: true, message: "Vault updated" }, { status: 200 });
+		} catch (err) {
+			console.error("Failed to update vault:", err);
+			return c.json(
+				{ error: "Failed to store vault", message: err instanceof Error ? err.message : String(err) },
+				{ status: 500 },
+			);
+		}
+	}
+
+	// Multi-user mode
+	const ctx = await getUserContext(c.env.KV_AI_PROXY, token, c.env.AI_JSON_CRYPTOKEN);
+	if (!ctx) {
+		return c.json({ error: "Invalid token" }, { status: 403 });
+	}
+	if (ctx.role !== 'admin') {
+		return c.json({ error: "Admin role required to modify vault" }, { status: 403 });
 	}
 
 	try {
@@ -221,13 +292,12 @@ app.put("/ai.json.enc", async (c) => {
 			return c.json({ error: "Empty body" }, { status: 400 });
 		}
 
-		await c.env.KV_AI_PROXY.put(AI_JSON_ENC_KV_KEY, body);
+		// Determine which vault to update based on context
+		const kvKey = ctx.vaultId === 'legacy' ? 'vault:ai.json.enc' : `vault:${ctx.vaultId}`;
+		await c.env.KV_AI_PROXY.put(kvKey, body);
+		cachedConfigs.delete(ctx.vaultId);
 
-		// Invalidate in‑memory cache so the next configuration access
-		// re‑decrypts the freshly stored vault.
-		cachedConfig = null;
-
-		return c.json({ ok: true, message: "Vault updated" }, { status: 200 });
+		return c.json({ ok: true, message: `Vault ${ctx.vaultId} updated` }, { status: 200 });
 	} catch (err) {
 		console.error("Failed to update vault:", err);
 		return c.json(
@@ -241,9 +311,8 @@ app.put("/ai.json.enc", async (c) => {
  * GET /ai.json
  *
  * Returns the **decrypted** AI configuration as JSON.
- * Authentication is performed by decrypting the vault with the Bearer token
- * provided in the Authorization header. Only a correct token (i.e. the original
- * encryption password) will result in a successful decryption.
+ * Authentication is performed using getUserContext to determine the user's vault.
+ * The Bearer token provided in the Authorization header is used to decrypt the user's specific vault.
  *
  * It can be used for example in a bash script like this:
  *
@@ -260,19 +329,21 @@ app.get("/ai.json", async (c) => {
 	}
 
 	try {
-		const encrypted = await c.env.KV_AI_PROXY.get(AI_JSON_ENC_KV_KEY);
-		if (!encrypted) {
-			return c.json({ error: "Vault not found" }, { status: 404 });
+		// Get user context to determine which vault to load
+		const ctx = await getUserContext(c.env.KV_AI_PROXY, token, c.env.AI_JSON_CRYPTOKEN);
+		if (!ctx) {
+			return c.json({ error: "Invalid token" }, { status: 403 });
 		}
 
-		const decrypted = await decryptAiConfig(encrypted, token);
-		return c.json(decrypted);
+		// Load the user-specific vault using their token as the decryption key
+		const config = await loadAiConfig(c.env, ctx.vaultId, token);
+		return c.json(config);
 	} catch (err) {
 		// Decryption failure (wrong password, format error, etc.)
 		console.error("Failed to decrypt vault for GET /ai.json:", err);
 		return c.json(
 			{
-				error: "Decryption failed",
+				error: "Decryption failed or vault not found",
 				message: "The provided token does not match the encryption password, or the vault is corrupted.",
 			},
 			{ status: 403 },
@@ -285,6 +356,125 @@ app.get("/ai.json", async (c) => {
  */
 app.get("/", (c) => {
 	return c.json({ status: "ok", service: "ai-proxy-cloudflare" });
+});
+
+/**
+ * GET /v1/auth/me
+ *
+ * Returns the current user's context information.
+ * Requires a valid user Bearer token.
+ */
+app.get("/v1/auth/me", async (c) => {
+	const authHeader = c.req.header("Authorization");
+	const token = extractBearerToken(authHeader || null);
+	const ctx = await getUserContext(c.env.KV_AI_PROXY, token, c.env.AI_JSON_CRYPTOKEN);
+	if (!ctx) {
+		return c.json({ error: "Unauthorized" }, { status: 401 });
+	}
+	return c.json(ctx);
+});
+
+/**
+ * Helper function to create a default empty vault configuration.
+ */
+function createDefaultVault(): AiConfig {
+	return { version: 1, providers: {}, crawlers: {} };
+}
+
+/**
+ * GET /v1/users
+ *
+ * List all users (admin only).
+ * Returns user information with sensitive keys masked.
+ * Requires admin role.
+ */
+app.get("/v1/users", async (c) => {
+	const authHeader = c.req.header("Authorization");
+	const token = extractBearerToken(authHeader || null);
+	const ctx = await getUserContext(c.env.KV_AI_PROXY, token, c.env.AI_JSON_CRYPTOKEN);
+
+	if (!ctx || ctx.role !== 'admin') {
+		return c.json({ error: "Unauthorized" }, { status: 403 });
+	}
+
+	const users = await c.env.KV_AI_PROXY.get('users', 'json');
+	if (!users) return c.json({ data: [] });
+
+	// Mask sensitive keys and format user data
+	const safeUsers = Object.entries(users).map(([username, record]: [string, Record<string, any>]) => ({
+		username,
+		owner: record.owner || username,
+		vaultId: record.vaultId || 'legacy',
+		role: record.role || 'user',
+		keyHint: record.key ? `***${record.key.slice(-4)}` : null,
+	}));
+
+	return c.json({ data: safeUsers });
+});
+
+/**
+ * POST /v1/users
+ *
+ * Create a new user with their own vault (admin only).
+ * Requires admin role.
+ * Accepts JSON: { username, password, role?, vaultId? }
+ */
+app.post("/v1/users", async (c) => {
+	const authHeader = c.req.header("Authorization");
+	const token = extractBearerToken(authHeader || null);
+	const ctx = await getUserContext(c.env.KV_AI_PROXY, token, c.env.AI_JSON_CRYPTOKEN);
+
+	if (!ctx || ctx.role !== 'admin') {
+		return c.json({ error: "Unauthorized" }, { status: 403 });
+	}
+
+	let body: any;
+	try {
+		body = await c.req.json();
+	} catch {
+		return c.json({ error: "Invalid JSON payload" }, { status: 400 });
+	}
+
+	const { username, password, role, vaultId: customVaultId } = body;
+
+	if (!username || !password) {
+		return c.json({ error: "username and password are required" }, { status: 400 });
+	}
+
+	// Check if user already exists
+	const users: Record<string, any> = await c.env.KV_AI_PROXY.get('users', 'json') || {};
+	if (users[username]) {
+		return c.json({ error: "User already exists" }, { status: 409 });
+	}
+
+	const vaultId = customVaultId || `vault_${username}`;
+
+
+	try {
+		// 1. Create and encrypt default vault
+		const defaultVault = createDefaultVault();
+		const encrypted = await encryptVault(JSON.stringify(defaultVault), password);
+
+		// 2. Store vault
+		await c.env.KV_AI_PROXY.put(`vault:${vaultId}`, encrypted);
+
+		// 3. Add user to users KV
+		users[username] = {
+			key: password,
+			owner: username,
+			vaultId,
+			role: role || 'user',
+		};
+		await c.env.KV_AI_PROXY.put('users', JSON.stringify(users));
+
+		return c.json({ ok: true, username, vaultId, role: role || 'user' });
+	} catch (err) {
+		console.error("Failed to create user:", err);
+		return c.json(
+			{ error: "Failed to create user", message: err instanceof Error ? err.message : String(err) },
+			{ status: 500 },
+		);
+	}
 });
 
 /**
@@ -1040,7 +1230,7 @@ app.post("*", async (c) => {
 			);
 		}
 
-		// Validate user key
+		// STEP 1: Legacy proxy authentication (UNCHANGED)
 		const username = await validateUserKey(env.KV_AI_PROXY, bearerToken);
 		if (!username) {
 			return c.json(
@@ -1063,8 +1253,29 @@ app.post("*", async (c) => {
 			);
 		}
 
-		// Load AI configuration (vault from KV, decrypted with env.AI_JSON_CRYPTOKEN)
-		const config = await getAiConfig(env);
+		// STEP 2: Get user context to find the vault ID (NEW)
+		// Note: We already validated the token, so getUserContext should succeed.
+		// If it is null (e.g., race condition), fallback to legacy.
+		const ctx = await getUserContext(env.KV_AI_PROXY, bearerToken, env.AI_JSON_CRYPTOKEN);
+		// ctx should never be null here because validateUserKey passed.
+		// If it is null (e.g., race condition), fallback to legacy.
+		const vaultId = ctx?.vaultId || 'legacy';
+
+		// STEP 3: Load the user-specific vault
+		let config: AiConfig;
+		try {
+			config = await loadAiConfig(env, vaultId, bearerToken);
+		} catch (err) {
+			console.error(`Failed to load vault ${vaultId} for user ${username}:`, err);
+			// Fallback to legacy vault if specific vault fails? Better to return 500.
+			// But to maintain resilience, try legacy as a last resort.
+			try {
+				config = await loadAiConfig(env, 'legacy', env.AI_JSON_CRYPTOKEN);
+				console.warn(`Falling back to legacy vault for user ${username}`);
+			} catch {
+				return c.json({ error: "Configuration unavailable" }, { status: 500 });
+			}
+		}
 
 		// Parse request body
 		let payload: any;
@@ -1176,6 +1387,55 @@ app.all("*", (c) => {
 		},
 		{ status: 404 },
 	);
+});
+
+// ── Migration routine ───────────────────────────────────────────────────
+
+/**
+ * Automatic migration routine that runs once when the Worker starts.
+ * Creates a default admin user if we're in legacy mode (no users in KV).
+ */
+async function runMigration(env: Env): Promise<void> {
+  try {
+    // Check if users KV exists and has entries
+    const users = await env.KV_AI_PROXY.get('users', 'json');
+    if (users && Object.keys(users).length > 0) {
+      console.log('Migration skipped: users already exist.');
+      return;
+    }
+
+    // Check if legacy vault exists
+    const legacyVault = await env.KV_AI_PROXY.get('vault:ai.json.enc');
+    if (!legacyVault) {
+      console.log('Migration skipped: no legacy vault found.');
+      return;
+    }
+
+    // Create admin user with the legacy vault
+    const adminToken = env.AI_JSON_CRYPTOKEN;
+    const newUsers = {
+      admin: {
+        key: adminToken,
+        owner: 'admin',
+        vaultId: 'legacy', // Keep the same vault to avoid data loss
+        role: 'admin',
+      }
+    };
+    await env.KV_AI_PROXY.put('users', JSON.stringify(newUsers));
+    console.log('Migration successful: created admin user with legacy vault.');
+  } catch (err) {
+    console.error('Migration failed:', err);
+  }
+}
+
+// Run migration on startup
+app.use('*', async (c, next) => {
+  // Only run migration once
+  if (!c.env.MIGRATION_RAN) {
+    await runMigration(c.env);
+    c.env.MIGRATION_RAN = true;
+  }
+  await next();
 });
 
 export default app;
