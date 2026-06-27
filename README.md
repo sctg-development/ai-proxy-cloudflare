@@ -1,6 +1,6 @@
-# AI Proxy Cloudflare Worker v2.2
+# AI Proxy Cloudflare Worker v3.0
 
-Modern proxy to route API requests through the **Cloudflare AI Gateway**.
+Modern proxy to route API requests through the **Cloudflare AI Gateway** with **multi-user and multi-vault support**.
 
 ## 🚀 Features
 
@@ -284,6 +284,208 @@ Returns the decrypted configuration. Authentication is performed by decrypting w
 ```bash
 curl -X GET https://ai-proxy.inet.pp.ua/ai.json \
   -H "Authorization: Bearer YOUR_CRYPTO_TOKEN"
+```
+
+---
+
+## 👥 Multi-User & Multi-Vault Support (NEW in v3.0)
+
+### Overview
+
+The worker now supports multiple users with isolated vaults, enabling secure multi-tenant deployments while maintaining 100% backward compatibility with legacy single-user setups.
+
+### Key Features
+
+- **User Isolation**: Each user has their own encrypted vault
+- **Role-Based Access Control**: Admin and user roles with different permissions
+- **Automatic Migration**: Legacy installations are automatically migrated to multi-user mode
+- **Backward Compatibility**: Existing clients continue to work without modification
+
+### User Management Endpoints
+
+#### GET /v1/auth/me
+
+Returns the current user's context information.
+
+```bash
+curl https://ai-proxy.inet.pp.ua/v1/auth/me \
+  -H "Authorization: Bearer USER_TOKEN"
+```
+
+Response:
+```json
+{
+  "username": "ronan",
+  "vaultId": "vault_ronan",
+  "role": "admin",
+  "isLegacy": false
+}
+```
+
+#### GET /v1/users (Admin only)
+
+List all users with masked credentials.
+
+```bash
+curl https://ai-proxy.inet.pp.ua/v1/users \
+  -H "Authorization: Bearer ADMIN_TOKEN"
+```
+
+Response:
+```json
+{
+  "data": [
+    {
+      "username": "ronan",
+      "owner": "ronan",
+      "vaultId": "vault_ronan",
+      "role": "admin",
+      "keyHint": "***1234"
+    },
+    {
+      "username": "audrey",
+      "owner": "audrey",
+      "vaultId": "vault_audrey",
+      "role": "user",
+      "keyHint": "***5678"
+    }
+  ]
+}
+```
+
+#### POST /v1/users (Admin only)
+
+Create a new user with their own vault.
+
+```bash
+curl -X POST https://ai-proxy.inet.pp.ua/v1/users \
+  -H "Authorization: Bearer ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "newuser",
+    "password": "secure_password_123",
+    "role": "user"
+  }'
+```
+
+Response:
+```json
+{
+  "ok": true,
+  "username": "newuser",
+  "vaultId": "vault_newuser",
+  "role": "user"
+}
+```
+
+### Multi-Vault Architecture
+
+#### Vault Storage
+
+- **Legacy mode**: Single vault at `vault:ai.json.enc`
+- **Multi-user mode**: Individual vaults at `vault:{vaultId}`
+- **Automatic detection**: The system detects the mode based on KV contents
+
+#### Migration Process
+
+1. **First request**: Automatic migration routine runs
+2. **Legacy detection**: Checks for existing `vault:ai.json.enc`
+3. **User creation**: Creates `admin` user with legacy vault
+4. **Seamless transition**: No downtime or data loss
+
+Migration logs:
+```
+Migration successful: created admin user with legacy vault.
+```
+
+#### Vault Isolation
+
+Each user's vault is:
+- ✅ Encrypted with their own password
+- ✅ Stored separately in KV
+- ✅ Accessible only with their token
+- ✅ Completely isolated from other users
+
+### Usage Examples
+
+#### Legacy client (unchanged)
+
+```bash
+# Existing clients continue to work without modification
+curl -X POST https://ai-proxy.inet.pp.ua/groq/v1/chat/completions \
+  -H "Authorization: Bearer LEGACY_TOKEN" \
+  -d '{"model": "llama-3.3-70b-versatile", "messages": [...]}'
+```
+
+#### Multi-user client
+
+```bash
+# New clients use the multi-user system
+curl -X POST https://ai-proxy.inet.pp.ua/groq/v1/chat/completions \
+  -H "Authorization: Bearer USER_SPECIFIC_TOKEN" \
+  -d '{"model": "llama-3.3-70b-versatile", "messages": [...]}'
+```
+
+#### Admin operations
+
+```bash
+# Admin can manage all users and vaults
+curl -X POST https://ai-proxy.inet.pp.ua/v1/users \
+  -H "Authorization: Bearer ADMIN_TOKEN" \
+  -d '{"username": "team_member", "password": "secure123", "role": "user"}'
+```
+
+### Role-Based Access Control
+
+| Role | Permissions |
+|------|-------------|
+| **admin** | Full access: create users, modify any vault, access all endpoints |
+| **user** | Limited access: only their own vault, read-only for shared resources |
+
+### Backward Compatibility
+
+**100% compatible with existing deployments:**
+
+- ✅ Legacy tokens continue to work
+- ✅ No configuration changes required
+- ✅ Automatic migration on first request
+- ✅ Rollback possible at any time
+
+### Migration Rollback
+
+If needed, rollback to legacy mode:
+
+```bash
+# 1. Rollback worker version
+wrangler rollback
+
+# 2. Remove users KV (optional)
+wrangler kv:key delete users
+
+# 3. Verify legacy mode
+curl -H "Authorization: Bearer LEGACY_TOKEN" https://worker-url/ai.json
+```
+
+---
+
+## 🔄 Forwarding flow
+
+```
+Client request
+    ↓
+[Bearer token validation]
+    ↓
+[ai.json.enc decryption] (cached)
+    ↓
+[Provider detection]
+    ↓
+[Provider API key selection] (round-robin)
+    ↓
+[Model ID prefixing for gateway]
+    ↓
+Cloudflare AI Gateway
+    ↓
+Final provider (Groq, SambaNova, etc.)
 ```
 
 ---
