@@ -181,3 +181,4 @@ secrets.json
 usage.ndjson
 bun.lock
 errors.ndjson
+.env.vars
