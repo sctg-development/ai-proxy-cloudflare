@@ -75,7 +75,7 @@ export const CrawlerCard: React.FC<CrawlerCardProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const creditModalState = useOverlayState();
 
-  const fetchCreditUsage = async (apiKey: string): Promise<CreditUsage> => {
+  const fetchFirecrawlCreditUsage = async (apiKey: string): Promise<CreditUsage> => {
     try {
       const response = await fetch('https://api.firecrawl.dev/v2/team/credit-usage', {
         method: 'GET',
@@ -113,7 +113,7 @@ export const CrawlerCard: React.FC<CrawlerCardProps> = ({
 
     try {
       const results = await Promise.all(
-        crawler.keys.map(key => fetchCreditUsage(key.key))
+        crawler.keys.map(key => fetchFirecrawlCreditUsage(key.key))
       );
       setCreditUsages(results);
     } catch (error) {
