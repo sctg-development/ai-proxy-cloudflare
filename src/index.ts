@@ -1532,7 +1532,7 @@ async function runMigration(env: Env): Promise<void> {
     }
 
     await env.KV_AI_PROXY.put(GROUPS_MIGRATION_KV_KEY, 'true');
-    console.log('Migration v2 successful: default group created and users attached.');
+    console.log('Migration v2 successful: default group created and users attached.  ');
   } catch (err) {
     console.error('Migration failed:', err);
   }
