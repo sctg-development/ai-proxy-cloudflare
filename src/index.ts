@@ -1463,6 +1463,7 @@ async function runMigration(env: Env): Promise<void> {
   try {
     // ── v1: multi-user bootstrap ─────────────────────────────────────
     const migrationDone = await env.KV_AI_PROXY.get(MIGRATION_KV_KEY);
+	console.log('Migration v1 status:', migrationDone);
     if (migrationDone !== 'true') {
       const users = await env.KV_AI_PROXY.get('users', 'json');
       const legacyVault = await env.KV_AI_PROXY.get(LEGACY_VAULT_KV_KEY);
