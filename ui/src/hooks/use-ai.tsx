@@ -63,6 +63,7 @@ export const AiProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         setUserContext(ctx);
       } catch (userContextError) {
         // Legacy mode: assume admin for backwards compatibility
+        console.warn('Failed to fetch user context, falling back to legacy mode:', userContextError);
         setUserContext({ username: 'legacy', vaultId: 'legacy', role: 'admin', isLegacy: true });
       }
     } catch (err) {
