@@ -40,6 +40,7 @@ import {
   Save,
   Server,
   Settings,
+  Shield,
   Upload,
   Webhook,
   X,
@@ -53,7 +54,8 @@ import {
   renumberPriorities,
 } from '../lib/provider-models';
 import { validateAiConfigSchema } from '../lib/utils/file-utils';
-import { PlaygroundPanel } from './playground-panel';
+import { ChatbotPanel } from './chatbot-panel';
+import { AdminPanel } from './admin-panel';
 import { ProviderCard } from './ui/ProviderCard';
 import { CrawlerCard } from './ui/CrawlerCard';
 import { WeatherApiCard } from './ui/WeatherApiCard';
@@ -738,7 +740,7 @@ export const Dashboard: React.FC = () => {
               onPress={() => setShowPlayground((current) => !current)}
             >
               <FlaskConical className="mr-2 h-4 w-4" />
-              Playground
+              Chatbot
             </Button>
             <Button variant="ghost" size="sm" onPress={() => {
               const timestamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+/, '');
@@ -810,7 +812,7 @@ export const Dashboard: React.FC = () => {
         )}
 
         {/* Role-based access control banner */}
-        {userContext && userContext.role !== 'admin' && (
+        {userContext && userContext.role !== 'admin' && userContext.role !== 'superadmin' && (
           <Alert status="default" className="mb-6">
             <Alert.Content>
               <Alert.Description>
@@ -821,7 +823,7 @@ export const Dashboard: React.FC = () => {
         )}
 
         {showPlayground ? (
-          <PlaygroundPanel activeConfig={activeConfig} />
+          <ChatbotPanel />
         ) : (
           /*
            * Top-level tabs. Currently only "Providers" exists but the tab bar
@@ -854,6 +856,14 @@ export const Dashboard: React.FC = () => {
                     Weather APIs
                   </div>
                 </Tabs.Tab>
+                {(userContext?.role === 'admin' || userContext?.role === 'superadmin') && (
+                  <Tabs.Tab id="admin">
+                    <div className="flex items-center gap-2">
+                      <Shield className="h-4 w-4" />
+                      Administration
+                    </div>
+                  </Tabs.Tab>
+                )}
               </Tabs.List>
             </Tabs.ListContainer>
 
@@ -1028,6 +1038,12 @@ export const Dashboard: React.FC = () => {
                 )}
               </div>
             </Tabs.Panel>
+
+            {(userContext?.role === 'admin' || userContext?.role === 'superadmin') && (
+              <Tabs.Panel id="admin" className="mt-6">
+                <AdminPanel />
+              </Tabs.Panel>
+            )}
           </Tabs>
         )}
       </main>

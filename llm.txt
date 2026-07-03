@@ -1,4 +1,64 @@
-@sctg/sdk — source index (2026-06-22)
-Stack: @sctg/sdk with name @sctg/cline-sdk
-
+ai-proxy-cloudflare — source index (2026-07-03)
 FILES
+  src/index.ts
+  src/lib/ai-enc.ts
+  src/lib/auth.ts
+  src/lib/balance.ts
+  src/lib/gateway.ts
+  src/lib/groups.ts
+  src/lib/universal.ts
+  src/lib/usage-db.ts
+  src/lib/vaults.ts
+  src/routes/groups.ts
+  src/routes/universal.ts
+  src/types/ai-config.ts
+  ui/package-lock.json
+  ui/package.json
+  ui/src/ai.sample.crawlers.json
+  ui/src/App.tsx
+  ui/src/components/admin-panel.tsx
+  ui/src/components/chatbot-panel.tsx
+  ui/src/components/dashboard.tsx
+  ui/src/components/login-screen.tsx
+  ui/src/components/main-layout.tsx
+  ui/src/components/playground-panel.tsx
+  ui/src/components/playground/code-block.tsx
+  ui/src/components/playground/conversation-history-sidebar.tsx
+  ui/src/components/playground/equivalent-code-panel.tsx
+  ui/src/components/playground/file-preview.tsx
+  ui/src/components/playground/generation-settings-panel.tsx
+  ui/src/components/playground/image-modal.tsx
+  ui/src/components/playground/message-bubble.tsx
+  ui/src/components/playground/message-list.tsx
+  ui/src/components/playground/multimodal-input.tsx
+  ui/src/components/playground/provider-model-key-selector.tsx
+  ui/src/components/playground/text-to-speech-button.tsx
+  ui/src/components/ui/ConfigModal.tsx
+  ui/src/components/ui/CrawlerCard.tsx
+  ui/src/components/ui/ModelDeletionModal.tsx
+  ui/src/components/ui/ModelPriorityList.tsx
+  ui/src/components/ui/ProviderCard.tsx
+  ui/src/components/ui/WeatherApiCard.tsx
+  ui/src/hooks/use-ai.tsx
+  ui/src/hooks/use-playground-conversation.ts
+  ui/src/hooks/use-playground-indexed-db.ts
+  ui/src/hooks/use-playground-request.ts
+  ui/src/hooks/use-playground-selection.ts
+  ui/src/lib/api.ts
+  ui/src/lib/crypto.ts
+  ui/src/lib/playground/constants.ts
+  ui/src/lib/playground/indexed-db.ts
+  ui/src/lib/playground/mistral-conversations.ts
+  ui/src/lib/playground/multimodal-files.ts
+  ui/src/lib/playground/payload.ts
+  ui/src/lib/playground/tts.ts
+  ui/src/lib/provider-models.ts
+  ui/src/lib/utils/file-utils.ts
+  ui/src/lib/utils/markdown-utils.ts
+  ui/src/main.tsx
+  ui/src/styles/index.css
+  ui/src/types/ai-config.ts
+  ui/src/types/playground-types.ts
+  ui/test-openrouter-models.js
+  ui/tsconfig.json
+  ui/vite.config.ts

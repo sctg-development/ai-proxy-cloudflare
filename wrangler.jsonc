@@ -6,6 +6,32 @@
     "compatibility_flags": [
         "nodejs_compat"
     ],
+    // ── Build defines ──────────────────────────────────────────────────────
+    // @sctg/cline-llms is built by Bun and calls createRequire(import.meta.url)
+    // at module scope; wrangler's bundler leaves import.meta.url undefined,
+    // which crashes workerd at startup. Pin it to a synthetic file URL.
+    "define": {
+        "import.meta.url": "'file:///worker/index.js'"
+    },
+    // ── Bundle aliases ─────────────────────────────────────────────────────
+    // The universal endpoint pulls in @sctg/cline-llms, whose builtin registry
+    // references every vendor family. Only openai/openai-compatible, anthropic,
+    // google (gemini), mistral, cohere and poolside are reachable through
+    // keypoollive vaults; the rest are Node-only or heavy and are stubbed out
+    // of the Worker bundle (see src/lib/stubs/unavailable-provider.cjs).
+    "alias": {
+        "@ai-sdk/amazon-bedrock": "./src/lib/stubs/unavailable-provider.cjs",
+        "@aws-sdk/credential-providers": "./src/lib/stubs/unavailable-provider.cjs",
+        "@ai-sdk/google-vertex": "./src/lib/stubs/unavailable-provider.cjs",
+        "@ai-sdk/google-vertex/anthropic": "./src/lib/stubs/unavailable-provider.cjs",
+        "@jerome-benoit/sap-ai-provider": "./src/lib/stubs/unavailable-provider.cjs",
+        "@langfuse/otel": "./src/lib/stubs/unavailable-provider.cjs",
+        "@opentelemetry/sdk-trace-node": "./src/lib/stubs/unavailable-provider.cjs",
+        "ai-sdk-provider-claude-code": "./src/lib/stubs/unavailable-provider.cjs",
+        "ai-sdk-provider-codex-cli": "./src/lib/stubs/unavailable-provider.cjs",
+        "ai-sdk-provider-opencode-sdk": "./src/lib/stubs/unavailable-provider.cjs",
+        "dify-ai-provider": "./src/lib/stubs/unavailable-provider.cjs"
+    },
     // ── Environment variables (plaintext) ──────────────────────────────────
     "vars": {
         "DEBUG": "false",

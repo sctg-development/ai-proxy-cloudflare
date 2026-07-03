@@ -18,7 +18,8 @@
 //
 // User authentication and key validation
 
-import { UserRecord } from '../types/ai-config';
+import { GroupRecord, UserRecord, UserRole } from '../types/ai-config';
+import { loadGroups } from './groups';
 
 /**
  * User context returned by getUserContext for management endpoints.
@@ -26,8 +27,19 @@ import { UserRecord } from '../types/ai-config';
 export interface UserContext {
   username: string;
   vaultId: string;
-  role: 'admin' | 'user';
+  role: UserRole;
   isLegacy: boolean;
+  /** Group the user belongs to (multi-group mode). */
+  groupId?: string;
+  /** Human-readable name of the user's group. */
+  groupName?: string;
+  /** Resolved group record (avoids a second KV read downstream). */
+  group?: GroupRecord;
+}
+
+/** True for roles allowed to manage users and vault content. */
+export function isAdminRole(role: UserRole): boolean {
+  return role === 'admin' || role === 'superadmin';
 }
 
 /**
@@ -60,21 +72,38 @@ export async function getUserContext(
   // 1. Check against 'users' KV first (multi-user mode)
   for (const [username, record] of Object.entries(users)) {
     if (record.key === bearerToken) {
+      const role: UserRole = (record.role as UserRole) || 'user';
+
+      // Multi-group mode: groupId takes precedence over per-user vaultId
+      if (record.groupId) {
+        const groups = await loadGroups(kv);
+        const group = groups[record.groupId];
+        return {
+          username,
+          vaultId: `group:${record.groupId}`,
+          role,
+          isLegacy: false,
+          groupId: record.groupId,
+          groupName: group?.name,
+          group,
+        };
+      }
+
       return {
         username,
         vaultId: record.vaultId || 'legacy',
-        role: (record.role as 'admin' | 'user') || 'user',
+        role,
         isLegacy: !record.vaultId,
       };
     }
   }
 
-  // 2. Fallback to legacy master token
+  // 2. Fallback to legacy master token — always superadmin
   if (bearerToken === cryptoToken) {
     return {
       username: 'legacy_admin',
       vaultId: 'legacy',
-      role: 'admin',
+      role: 'superadmin',
       isLegacy: true,
     };
   }

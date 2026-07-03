@@ -17,18 +17,8 @@
 // SOFTWARE.
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { AiConfig } from '../types/ai-config';
-import { ApiService } from '../lib/api';
+import { ApiService, type UserContext } from '../lib/api';
 import { encryptVault } from '../lib/crypto';
-
-/**
- * User context returned by the /v1/auth/me endpoint.
- */
-interface UserContext {
-  username: string;
-  vaultId: string;
-  role: 'admin' | 'user';
-  isLegacy: boolean;
-}
 
 /**
  * Interface for the AI Context.

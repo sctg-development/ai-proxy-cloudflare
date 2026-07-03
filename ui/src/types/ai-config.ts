@@ -160,6 +160,14 @@ export interface WeatherApi {
 }
 
 /**
+ * Roles supported by the multi-group architecture.
+ * - `superadmin`: manages all groups and their users (typically no group of their own)
+ * - `admin`: manages the users and vault of their own group
+ * - `user`: consumes the proxy and reads their group vault
+ */
+export type UserRole = 'superadmin' | 'admin' | 'user';
+
+/**
  * Represents a user record in the users KV store.
  * This interface supports both legacy and new fields for backward compatibility.
  */
@@ -172,8 +180,29 @@ export interface UserRecord {
   type?: 'expired' | 'free' | 'paid' | 'premium' | 'unlimited';
   /** New: ID of the vault this user should access (defaults to 'legacy') */
   vaultId?: string;
-  /** New: Admin or standard user (defaults to 'user') */
-  role?: 'admin' | 'user';
+  /** New: role of the user (defaults to 'user') */
+  role?: UserRole;
+  /** Multi-group: ID of the group this user belongs to. Takes precedence over vaultId. */
+  groupId?: string;
+}
+
+/**
+ * Represents a group in the groups KV store (KV key: 'groups').
+ * A group owns exactly one shared vault, encrypted with a secret derived
+ * from AI_JSON_CRYPTOKEN and the group ID (see lib/groups.ts).
+ */
+export interface GroupRecord {
+  /** Human-readable group name */
+  name: string;
+  /** Creation timestamp (ms since epoch) */
+  createdAt: number;
+  /** Username of the creator */
+  createdBy?: string;
+  /**
+   * Legacy group flag: the vault is the historical vault:ai.json.enc blob,
+   * encrypted with AI_JSON_CRYPTOKEN instead of a derived secret.
+   */
+  legacy?: boolean;
 }
 
 

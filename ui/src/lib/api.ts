@@ -19,17 +19,37 @@
  * @file API client for interacting with the Cloudflare Worker.
  */
 
-import type { AiConfig } from '../types/ai-config';
+import type { AiConfig, UserRole } from '../types/ai-config';
 import { decryptAiConfig } from './crypto';
 
 /**
  * User context returned by the /v1/auth/me endpoint.
  */
-interface UserContext {
+export interface UserContext {
   username: string;
   vaultId: string;
-  role: 'admin' | 'user';
+  role: UserRole;
   isLegacy: boolean;
+  groupId?: string;
+  groupName?: string;
+}
+
+/** A group as returned by GET /v1/groups. */
+export interface GroupSummary {
+  id: string;
+  name: string;
+  createdAt: number;
+  createdBy?: string;
+  legacy: boolean;
+  memberCount: number;
+}
+
+/** A group member as returned by GET /v1/groups/:id/users. */
+export interface GroupMember {
+  username: string;
+  owner: string;
+  role: UserRole;
+  keyHint: string | null;
 }
 
 /**
@@ -154,6 +174,94 @@ export const ApiService = {
     }
 
     return await response.json() as UserContext;
+  },
+
+  /**
+   * Generic authenticated JSON request against the Worker.
+   * Throws with the server-provided message on non-2xx responses.
+   */
+  async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+    const token = this.getToken();
+    if (!token) throw new Error('No authorization token found');
+
+    const response = await fetch(`${import.meta.env.VAULT_URL}${path}`, {
+      ...init,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(init.headers ?? {}),
+        'Authorization': `Bearer ${token}`,
+      },
+    });
+
+    const body = (await response.json().catch(() => ({}))) as T & ApiError;
+    if (!response.ok) {
+      throw new Error(body.message || body.error || `Request failed with status ${response.status}`);
+    }
+    return body;
+  },
+
+  // ── Group administration ─────────────────────────────────────────
+
+  /** List the groups visible to the caller. */
+  async listGroups(): Promise<GroupSummary[]> {
+    const body = await this.request<{ data: GroupSummary[] }>('/v1/groups');
+    return body.data;
+  },
+
+  /** Create a group (superadmin only). */
+  async createGroup(name: string, id?: string): Promise<{ id: string; seededFromByok: boolean }> {
+    return this.request('/v1/groups', {
+      method: 'POST',
+      body: JSON.stringify({ name, ...(id ? { id } : {}) }),
+    });
+  },
+
+  /** Delete a group; force also removes its members (superadmin only). */
+  async deleteGroup(groupId: string, force = false): Promise<{ deletedUsers: string[] }> {
+    return this.request(`/v1/groups/${encodeURIComponent(groupId)}${force ? '?force=true' : ''}`, {
+      method: 'DELETE',
+    });
+  },
+
+  /** List the members of a group. */
+  async listGroupUsers(groupId: string): Promise<GroupMember[]> {
+    const body = await this.request<{ data: GroupMember[] }>(
+      `/v1/groups/${encodeURIComponent(groupId)}/users`,
+    );
+    return body.data;
+  },
+
+  /** Create a group member. Returns the generated API key (shown once). */
+  async createGroupUser(
+    groupId: string,
+    username: string,
+    role: 'admin' | 'user',
+    key?: string,
+  ): Promise<{ username: string; role: string; key: string }> {
+    return this.request(`/v1/groups/${encodeURIComponent(groupId)}/users`, {
+      method: 'POST',
+      body: JSON.stringify({ username, role, ...(key ? { key } : {}) }),
+    });
+  },
+
+  /** Update a member (role change or key regeneration). */
+  async updateGroupUser(
+    groupId: string,
+    username: string,
+    update: { role?: 'admin' | 'user'; regenerateKey?: boolean },
+  ): Promise<{ username: string; role: string; key?: string }> {
+    return this.request(
+      `/v1/groups/${encodeURIComponent(groupId)}/users/${encodeURIComponent(username)}`,
+      { method: 'PUT', body: JSON.stringify(update) },
+    );
+  },
+
+  /** Remove a member from a group. */
+  async deleteGroupUser(groupId: string, username: string): Promise<void> {
+    await this.request(
+      `/v1/groups/${encodeURIComponent(groupId)}/users/${encodeURIComponent(username)}`,
+      { method: 'DELETE' },
+    );
   },
 
   /**

@@ -28,9 +28,24 @@ import { logger } from "hono/logger";
 import { cors } from "hono/cors";
 
 import { decryptAiConfig, encryptVault } from "./lib/ai-enc";
-import { validateUserKey, extractBearerToken, getUserContext } from "./lib/auth";
+import { validateUserKey, extractBearerToken, getUserContext, isAdminRole, type UserContext } from "./lib/auth";
 import { forwardToCfAiGateway, detectProvider } from "./lib/gateway";
 import { checkBalance, deductBalance } from "./lib/balance";
+import {
+	BYOK_KV_KEY,
+	DEFAULT_GROUP_ID,
+	LEGACY_VAULT_KV_KEY,
+	loadGroups,
+	saveGroups,
+} from "./lib/groups";
+import {
+	invalidateVaultCache,
+	loadAiConfig,
+	loadGroupConfig,
+	saveGroupConfig,
+} from "./lib/vaults";
+import groupsRouter from "./routes/groups";
+import universalRouter from "./routes/universal";
 import {
 	recordUsage,
 	recordError,
@@ -38,7 +53,6 @@ import {
 	getErrorStats,
 	purge,
 	getFileSizeBytes,
-	getUserIdFromAuth,
 	migrateUsageNdjson,
 	migrateErrorNdjson,
 	type KeyUsageEntry,
@@ -75,16 +89,25 @@ type HonoEnv = {
 
 const app = new Hono<HonoEnv>();
 
-/**
- * In‑memory cache of the decrypted AI configurations, keyed by vaultId.
- * Cleared after a successful PUT to force re‑decryption with current vault.
- */
-const cachedConfigs = new Map<string, AiConfig>();
-
 // ── Middleware ────────────────────────────────────────────────────────
 
 app.use(logger());
 app.use("*", cors());
+
+// Run the one-time migration lazily on the first request of each isolate
+// (module scope has no access to bindings in the modules format).
+let migrationChecked = false;
+app.use("*", async (c, next) => {
+	if (!migrationChecked) {
+		migrationChecked = true;
+		try {
+			await runMigration(c.env);
+		} catch (err) {
+			console.error("Lazy migration failed:", err);
+		}
+	}
+	await next();
+});
 
 /**
  * Read the raw encrypted configuration from KV.
@@ -115,44 +138,21 @@ async function getAiConfig(env: Env): Promise<AiConfig> {
 }
 
 /**
- * Load a specific AI configuration vault by ID.
- * Caches decrypted configurations in memory per vaultId.
- *
- * @param env - Worker environment bindings
- * @param vaultId - ID of the vault to load ('legacy' or custom ID)
- * @param cryptoToken - Token used to decrypt the vault
- * @returns Decrypted AI configuration object
- * @throws If the vault cannot be read or decryption fails
+ * Resolve the decrypted configuration for an authenticated user context:
+ * group vault (derived secret) when the user belongs to a group, otherwise
+ * the legacy/per-user vault decrypted with the bearer token.
  */
-async function loadAiConfig(
-  env: Env,
-  vaultId: string,
-  cryptoToken: string
+async function loadConfigForContext(
+	env: Env,
+	ctx: UserContext,
+	bearerToken: string,
 ): Promise<AiConfig> {
-  // Check memory cache first
-  const cacheKey = vaultId;
-  if (cachedConfigs.has(cacheKey)) {
-    return cachedConfigs.get(cacheKey)!;
-  }
-
-  let encryptedPayload: string | null;
-
-  if (vaultId === 'legacy') {
-    // Legacy compatibility - load from the original key
-    encryptedPayload = await env.KV_AI_PROXY.get('vault:ai.json.enc');
-  } else {
-    // New multi-vault mode - load from vault:{vaultId}
-    encryptedPayload = await env.KV_AI_PROXY.get(`vault:${vaultId}`);
-  }
-
-  if (!encryptedPayload) {
-    throw new Error(`Vault "${vaultId}" not found in KV`);
-  }
-
-  // Decrypt using the provided token (which is the user's password)
-  const decrypted = await decryptAiConfig(encryptedPayload, cryptoToken);
-  cachedConfigs.set(cacheKey, decrypted);
-  return decrypted;
+	if (ctx.groupId && ctx.group) {
+		return loadGroupConfig(env, ctx.groupId, ctx.group);
+	}
+	// Legacy/per-user vaults keep the historical contract: the bearer token IS
+	// the vault password, so a token that cannot decrypt gets nothing.
+	return loadAiConfig(env, ctx.vaultId, bearerToken);
 }
 
 /**
@@ -212,35 +212,45 @@ function findProviderModel(provider: AiConfig["providers"][string], modelId: str
 	return provider.models.find((model) => model.id === modelId) ?? null;
 }
 
-// ── Migration on startup ─────────────────────────────────────────────────────
-
-// Run migration on startup - execute immediately when worker loads
-// This ensures migration runs once when the worker starts, not on every request
-try {
-  // Execute migration synchronously on worker startup
-  // Note: In Cloudflare Workers, top-level await is supported
-  const env = {
-    KV_AI_PROXY: (globalThis as any).KV_AI_PROXY,
-    AI_JSON_CRYPTOKEN: (globalThis as any).AI_JSON_CRYPTOKEN
-  } as unknown as Env;
-
-  // Only run if we have the required bindings
-  if (env.KV_AI_PROXY && env.AI_JSON_CRYPTOKEN) {
-    await runMigration(env);
-  }
-} catch (err) {
-  console.error('Startup migration failed:', err);
-}
 // ── Endpoints ─────────────────────────────────────────────────────
 
 /**
  * GET /ai.json.enc
  *
- * Returns the raw OpenSSL‑encrypted vault as plain text (base64).
- * Unauthenticated – anyone with the worker URL can download the encrypted blob.
+ * Returns the OpenSSL‑encrypted vault as plain text (base64).
+ *
+ * - Without Authorization (legacy contract): the raw legacy blob.
+ * - With a Bearer token of a group member: the group vault is decrypted with
+ *   the group-derived secret and re-encrypted on the fly with the caller's
+ *   token, so SDK/chatbot clients keep using their own token as the vault
+ *   password.
+ * - With a Bearer token of a per-user-vault user: the raw blob of their vault
+ *   (already encrypted with their token).
  */
 app.get("/ai.json.enc", async (c) => {
 	try {
+		const token = extractBearerToken(c.req.header("Authorization") || null);
+		if (token) {
+			const ctx = await getUserContext(c.env.KV_AI_PROXY, token, c.env.AI_JSON_CRYPTOKEN);
+			if (ctx?.groupId && ctx.group) {
+				const config = await loadGroupConfig(c.env, ctx.groupId, ctx.group);
+				const reEncrypted = await encryptVault(JSON.stringify(config), token);
+				return c.text(reEncrypted, {
+					headers: { "Content-Type": "text/plain; charset=utf-8" },
+				});
+			}
+			if (ctx && !ctx.isLegacy) {
+				const encrypted = await c.env.KV_AI_PROXY.get(`vault:${ctx.vaultId}`);
+				if (!encrypted) {
+					return c.text("Vault not found", { status: 404 });
+				}
+				return c.text(encrypted, {
+					headers: { "Content-Type": "text/plain; charset=utf-8" },
+				});
+			}
+			// Unknown token or legacy user: fall through to the legacy blob
+		}
+
 		const encrypted = await c.env.KV_AI_PROXY.get(AI_JSON_ENC_KV_KEY);
 		if (!encrypted) {
 			return c.text("Vault not found", { status: 404 });
@@ -284,7 +294,7 @@ app.put("/ai.json.enc", async (c) => {
 			}
 
 			await c.env.KV_AI_PROXY.put(AI_JSON_ENC_KV_KEY, body);
-			cachedConfigs.delete('legacy');
+			invalidateVaultCache('legacy');
 
 			return c.json({ ok: true, message: "Vault updated" }, { status: 200 });
 		} catch (err) {
@@ -301,7 +311,7 @@ app.put("/ai.json.enc", async (c) => {
 	if (!ctx) {
 		return c.json({ error: "Invalid token" }, { status: 403 });
 	}
-	if (ctx.role !== 'admin') {
+	if (!isAdminRole(ctx.role)) {
 		return c.json({ error: "Admin role required to modify vault" }, { status: 403 });
 	}
 
@@ -311,10 +321,26 @@ app.put("/ai.json.enc", async (c) => {
 			return c.json({ error: "Empty body" }, { status: 400 });
 		}
 
-		// Determine which vault to update based on context
-		const kvKey = ctx.vaultId === 'legacy' ? 'vault:ai.json.enc' : `vault:${ctx.vaultId}`;
+		// Group vault: the client encrypted the payload with their own token.
+		// Decrypt it, then re-encrypt with the group-derived secret.
+		if (ctx.groupId && ctx.group) {
+			let config: AiConfig;
+			try {
+				config = await decryptAiConfig(body, token!);
+			} catch {
+				return c.json(
+					{ error: "Payload must be encrypted with your own token" },
+					{ status: 400 },
+				);
+			}
+			await saveGroupConfig(c.env, ctx.groupId, ctx.group, config);
+			return c.json({ ok: true, message: `Group vault ${ctx.groupId} updated` }, { status: 200 });
+		}
+
+		// Legacy / per-user vault: store the ciphertext as-is
+		const kvKey = ctx.vaultId === 'legacy' ? AI_JSON_ENC_KV_KEY : `vault:${ctx.vaultId}`;
 		await c.env.KV_AI_PROXY.put(kvKey, body);
-		cachedConfigs.delete(ctx.vaultId);
+		invalidateVaultCache(ctx.vaultId);
 
 		return c.json({ ok: true, message: `Vault ${ctx.vaultId} updated` }, { status: 200 });
 	} catch (err) {
@@ -354,8 +380,8 @@ app.get("/ai.json", async (c) => {
 			return c.json({ error: "Invalid token" }, { status: 403 });
 		}
 
-		// Load the user-specific vault using their token as the decryption key
-		const config = await loadAiConfig(c.env, ctx.vaultId, token);
+		// Group members get their group vault; others decrypt with their token
+		const config = await loadConfigForContext(c.env, ctx, token);
 		return c.json(config);
 	} catch (err) {
 		// Decryption failure (wrong password, format error, etc.)
@@ -390,7 +416,9 @@ app.get("/v1/auth/me", async (c) => {
 	if (!ctx) {
 		return c.json({ error: "Unauthorized" }, { status: 401 });
 	}
-	return c.json(ctx);
+	// Do not leak the raw group record; expose the useful scalar fields
+	const { group: _group, ...publicCtx } = ctx;
+	return c.json(publicCtx);
 });
 
 /**
@@ -412,21 +440,26 @@ app.get("/v1/users", async (c) => {
 	const token = extractBearerToken(authHeader || null);
 	const ctx = await getUserContext(c.env.KV_AI_PROXY, token, c.env.AI_JSON_CRYPTOKEN);
 
-	if (!ctx || ctx.role !== 'admin') {
+	if (!ctx || !isAdminRole(ctx.role)) {
 		return c.json({ error: "Unauthorized" }, { status: 403 });
 	}
 
 	const users = await c.env.KV_AI_PROXY.get('users', 'json');
 	if (!users) return c.json({ data: [] });
 
-	// Mask sensitive keys and format user data
-	const safeUsers = Object.entries(users).map(([username, record]: [string, Record<string, any>]) => ({
-		username,
-		owner: record.owner || username,
-		vaultId: record.vaultId || 'legacy',
-		role: record.role || 'user',
-		keyHint: record.key ? `***${record.key.slice(-4)}` : null,
-	}));
+	// Mask sensitive keys and format user data.
+	// superadmin sees everyone; a group admin only sees their own group.
+	const safeUsers = Object.entries(users)
+		.filter(([, record]: [string, Record<string, any>]) =>
+			ctx.role === 'superadmin' || (ctx.groupId && record.groupId === ctx.groupId))
+		.map(([username, record]: [string, Record<string, any>]) => ({
+			username,
+			owner: record.owner || username,
+			vaultId: record.vaultId || (record.groupId ? `group:${record.groupId}` : 'legacy'),
+			groupId: record.groupId ?? null,
+			role: record.role || 'user',
+			keyHint: record.key ? `***${record.key.slice(-4)}` : null,
+		}));
 
 	return c.json({ data: safeUsers });
 });
@@ -443,7 +476,7 @@ app.post("/v1/users", async (c) => {
 	const token = extractBearerToken(authHeader || null);
 	const ctx = await getUserContext(c.env.KV_AI_PROXY, token, c.env.AI_JSON_CRYPTOKEN);
 
-	if (!ctx || ctx.role !== 'admin') {
+	if (!ctx || !isAdminRole(ctx.role)) {
 		return c.json({ error: "Unauthorized" }, { status: 403 });
 	}
 
@@ -662,6 +695,39 @@ export async function isKeypoolAuthValid(c: any, token: string | null, _env: Env
 }
 
 /**
+ * Resolve the stats identity for /v1/keypool/* endpoints.
+ *
+ * - Group members share their group's stats bucket (`group:<groupId>`), so the
+ *   universal endpoint and every SDK client of the group feed the same stats.
+ * - Known users without a group keep the historical token-based bucket.
+ * - Unknown tokens fall back to the legacy contract: the token must decrypt
+ *   the legacy vault (pre-multi-user SDK clients).
+ */
+async function resolveKeypoolIdentity(
+	c: any,
+	env: Env,
+): Promise<{ userId: string } | { error: string; status: 401 | 403 }> {
+	const authHeader = c.req.header("Authorization") ?? null;
+	const token = extractBearerToken(authHeader);
+	if (!token) {
+		return { error: "Missing Authorization header", status: 401 };
+	}
+
+	const ctx = await getUserContext(env.KV_AI_PROXY, token, env.AI_JSON_CRYPTOKEN);
+	if (ctx?.groupId) {
+		return { userId: `group:${ctx.groupId}` };
+	}
+	if (ctx) {
+		return { userId: token };
+	}
+
+	if (await isKeypoolAuthValid(c, token, env)) {
+		return { userId: token };
+	}
+	return { error: "Invalid keypool authorization", status: 403 };
+}
+
+/**
  * POST /v1/keypool/usage
  *
  * Record a successful API key usage event.
@@ -676,16 +742,11 @@ export async function isKeypoolAuthValid(c: any, token: string | null, _env: Env
  */
 app.post("/v1/keypool/usage", async (c) => {
 	const env = c.env;
-	const authHeader = c.req.header("Authorization") ?? null;
-	const userId = getUserIdFromAuth(authHeader);
-
-	if (!userId) {
-		return c.json({ error: "Missing Authorization header" }, { status: 401 });
+	const identity = await resolveKeypoolIdentity(c, env);
+	if ('error' in identity) {
+		return c.json({ error: identity.error }, { status: identity.status });
 	}
-
-	if (!await isKeypoolAuthValid(c, extractBearerToken(authHeader), env)) {
-		return c.json({ error: "Invalid keypool authorization" }, { status: 403 });
-	}
+	const { userId } = identity;
 
 	let entry: KeyUsageEntry;
 	try {
@@ -711,16 +772,11 @@ app.post("/v1/keypool/usage", async (c) => {
  */
 app.post("/v1/keypool/error", async (c) => {
 	const env = c.env;
-	const authHeader = c.req.header("Authorization") ?? null;
-	const userId = getUserIdFromAuth(authHeader);
-
-	if (!userId) {
-		return c.json({ error: "Missing Authorization header" }, { status: 401 });
+	const identity = await resolveKeypoolIdentity(c, env);
+	if ('error' in identity) {
+		return c.json({ error: identity.error }, { status: identity.status });
 	}
-
-	if (!await isKeypoolAuthValid(c, extractBearerToken(authHeader), env)) {
-		return c.json({ error: "Invalid keypool authorization" }, { status: 403 });
-	}
+	const { userId } = identity;
 
 	let entry: KeyErrorEntry;
 	try {
@@ -752,16 +808,11 @@ app.post("/v1/keypool/error", async (c) => {
  */
 app.get("/v1/keypool/stats", async (c) => {
 	const env = c.env;
-	const authHeader = c.req.header("Authorization") ?? null;
-	const userId = getUserIdFromAuth(authHeader);
-
-	if (!userId) {
-		return c.json({ error: "Missing Authorization header" }, { status: 401 });
+	const identity = await resolveKeypoolIdentity(c, env);
+	if ('error' in identity) {
+		return c.json({ error: identity.error }, { status: identity.status });
 	}
-
-	if (!await isKeypoolAuthValid(c, extractBearerToken(authHeader), env)) {
-		return c.json({ error: "Invalid keypool authorization" }, { status: 403 });
-	}
+	const { userId } = identity;
 
 	const period = (c.req.query("period") as UsagePeriod) || "day";
 	const stats = await getUsageStats(env.USAGE_DO, userId, period);
@@ -782,16 +833,11 @@ app.get("/v1/keypool/stats", async (c) => {
  */
 app.get("/v1/keypool/errors", async (c) => {
 	const env = c.env;
-	const authHeader = c.req.header("Authorization") ?? null;
-	const userId = getUserIdFromAuth(authHeader);
-
-	if (!userId) {
-		return c.json({ error: "Missing Authorization header" }, { status: 401 });
+	const identity = await resolveKeypoolIdentity(c, env);
+	if ('error' in identity) {
+		return c.json({ error: identity.error }, { status: identity.status });
 	}
-
-	if (!await isKeypoolAuthValid(c, extractBearerToken(authHeader), env)) {
-		return c.json({ error: "Invalid keypool authorization" }, { status: 403 });
-	}
+	const { userId } = identity;
 
 	const period = (c.req.query("period") as UsagePeriod) || "day";
 	const stats = await getErrorStats(env.USAGE_DO, userId, period);
@@ -814,16 +860,11 @@ app.get("/v1/keypool/errors", async (c) => {
  */
 app.post("/v1/keypool/migrate/usage", async (c) => {
 	const env = c.env;
-	const authHeader = c.req.header("Authorization") ?? null;
-	const userId = getUserIdFromAuth(authHeader);
-
-	if (!userId) {
-		return c.json({ error: "Missing Authorization header" }, { status: 401 });
+	const identity = await resolveKeypoolIdentity(c, env);
+	if ('error' in identity) {
+		return c.json({ error: identity.error }, { status: identity.status });
 	}
-
-	if (!await isKeypoolAuthValid(c, extractBearerToken(authHeader), env)) {
-		return c.json({ error: "Invalid keypool authorization" }, { status: 403 });
-	}
+	const { userId } = identity;
 
 	let body: string;
 	try {
@@ -876,16 +917,11 @@ app.post("/v1/keypool/migrate/usage", async (c) => {
  */
 app.post("/v1/keypool/migrate/errors", async (c) => {
 	const env = c.env;
-	const authHeader = c.req.header("Authorization") ?? null;
-	const userId = getUserIdFromAuth(authHeader);
-
-	if (!userId) {
-		return c.json({ error: "Missing Authorization header" }, { status: 401 });
+	const identity = await resolveKeypoolIdentity(c, env);
+	if ('error' in identity) {
+		return c.json({ error: identity.error }, { status: identity.status });
 	}
-
-	if (!await isKeypoolAuthValid(c, extractBearerToken(authHeader), env)) {
-		return c.json({ error: "Invalid keypool authorization" }, { status: 403 });
-	}
+	const { userId } = identity;
 
 	let body: string;
 	try {
@@ -935,16 +971,11 @@ app.post("/v1/keypool/migrate/errors", async (c) => {
  */
 app.post("/v1/keypool/purge", async (c) => {
 	const env = c.env;
-	const authHeader = c.req.header("Authorization") ?? null;
-	const userId = getUserIdFromAuth(authHeader);
-
-	if (!userId) {
-		return c.json({ error: "Missing Authorization header" }, { status: 401 });
+	const identity = await resolveKeypoolIdentity(c, env);
+	if ('error' in identity) {
+		return c.json({ error: identity.error }, { status: identity.status });
 	}
-	
-	if (!await isKeypoolAuthValid(c, extractBearerToken(authHeader), env)) {
-		return c.json({ error: "Invalid keypool authorization" }, { status: 403 });
-	}
+	const { userId } = identity;
 
 	const freed = await purge(c.env.USAGE_DO, userId);
 	return c.json({ ok: true, freedBytes: freed });
@@ -958,27 +989,18 @@ app.post("/v1/keypool/purge", async (c) => {
  */
 app.get("/v1/keypool/size", async (c) => {
 	const env = c.env;
-	const authHeader = c.req.header("Authorization") ?? null;
-	const userId = getUserIdFromAuth(authHeader);
-
-	if (!userId) {
-		return c.json({ error: "Missing Authorization header" }, { status: 401 });
+	const identity = await resolveKeypoolIdentity(c, env);
+	if ('error' in identity) {
+		return c.json({ error: identity.error }, { status: identity.status });
 	}
-	
-	if (!await isKeypoolAuthValid(c, extractBearerToken(authHeader), env)) {
-		return c.json({ error: "Invalid keypool authorization" }, { status: 403 });
-	}
+	const { userId } = identity;
 
 	const size = await getFileSizeBytes(env.USAGE_DO, userId);
 	return c.json({ sizeBytes: size });
 });
 
 // ── BYOK Models Endpoints ─────────────────────────────────────────────
-
-/**
- * KV key where the BYOK (Bring Your Own Key) configuration is stored.
- */
-const BYOK_KV_KEY = "vault:byok";
+// (BYOK_KV_KEY is shared with the group provisioning code in lib/groups.ts)
 
 /**
  *
@@ -1221,6 +1243,13 @@ app.all("/v1/keypool/corsproxy", async (c) => {
 	}
 });
 
+// ── Group management ──────────────────────────────────────────────────
+// Mounted before the catch-all proxy handler so POST /v1/groups/... wins.
+app.route("/v1/groups", groupsRouter);
+
+// ── Universal OpenAI-compatible proxy (SDK keypoollive) ───────────────
+app.route("/v1/keypool/universal", universalRouter);
+
 /**
  * Main API endpoint — handles both legacy and new request formats.
  * Supports:
@@ -1280,10 +1309,12 @@ app.post("*", async (c) => {
 		// If it is null (e.g., race condition), fallback to legacy.
 		const vaultId = ctx?.vaultId || 'legacy';
 
-		// STEP 3: Load the user-specific vault
+		// STEP 3: Load the user-specific vault (group vault for group members)
 		let config: AiConfig;
 		try {
-			config = await loadAiConfig(env, vaultId, bearerToken);
+			config = ctx
+				? await loadConfigForContext(env, ctx, bearerToken)
+				: await loadAiConfig(env, vaultId, bearerToken);
 		} catch (err) {
 			console.error(`Failed to load vault ${vaultId} for user ${username}:`, err);
 			// Fallback to legacy vault if specific vault fails? Better to return 500.
@@ -1411,54 +1442,96 @@ app.all("*", (c) => {
 // ── Migration routine ───────────────────────────────────────────────────
 
 /**
- * KV key to track if migration has been executed
+ * KV key to track if the v1 (multi-user) migration has been executed
  */
 const MIGRATION_KV_KEY = "migration:ran";
 
 /**
- * Automatic migration routine that runs once when the Worker starts.
- * Creates a default admin user if we're in legacy mode (no users in KV).
+ * KV key to track if the v2 (multi-group) migration has been executed
+ */
+const GROUPS_MIGRATION_KV_KEY = "migration:groups";
+
+/**
+ * Automatic migration routine that runs once per deployment (lazily, on the
+ * first request of an isolate — guarded by KV flags).
+ *
+ * v1: creates a default admin user if we're in legacy mode (no users in KV).
+ * v2: creates the 'default' group backed by the legacy vault, attaches every
+ *     legacy-vault user to it, and promotes the master-token user to superadmin.
  */
 async function runMigration(env: Env): Promise<void> {
   try {
-    // Check if migration has already been executed
+    // ── v1: multi-user bootstrap ─────────────────────────────────────
     const migrationDone = await env.KV_AI_PROXY.get(MIGRATION_KV_KEY);
-    if (migrationDone === 'true') {
-      console.log('Migration skipped: already executed.');
-      return;
-    }
+    if (migrationDone !== 'true') {
+      const users = await env.KV_AI_PROXY.get('users', 'json');
+      const legacyVault = await env.KV_AI_PROXY.get(LEGACY_VAULT_KV_KEY);
 
-    // Check if users KV exists and has entries
-    const users = await env.KV_AI_PROXY.get('users', 'json');
-    if (users && Object.keys(users).length > 0) {
-      console.log('Migration skipped: users already exist.');
-      // Mark migration as done even if users exist
-      await env.KV_AI_PROXY.put(MIGRATION_KV_KEY, 'true');
-      return;
-    }
-
-    // Check if legacy vault exists
-    const legacyVault = await env.KV_AI_PROXY.get('vault:ai.json.enc');
-    if (!legacyVault) {
-      console.log('Migration skipped: no legacy vault found.');
-      // Mark migration as done even if no legacy vault
-      await env.KV_AI_PROXY.put(MIGRATION_KV_KEY, 'true');
-      return;
-    }
-
-    // Create admin user with the legacy vault
-    const adminToken = env.AI_JSON_CRYPTOKEN;
-    const newUsers = {
-      admin: {
-        key: adminToken,
-        owner: 'admin',
-        vaultId: 'legacy', // Keep the same vault to avoid data loss
-        role: 'admin',
+      if (users && Object.keys(users).length > 0) {
+        console.log('Migration v1 skipped: users already exist.');
+      } else if (!legacyVault) {
+        console.log('Migration v1 skipped: no legacy vault found.');
+      } else {
+        const newUsers = {
+          admin: {
+            key: env.AI_JSON_CRYPTOKEN,
+            owner: 'admin',
+            vaultId: 'legacy', // Keep the same vault to avoid data loss
+            role: 'admin',
+          },
+        };
+        await env.KV_AI_PROXY.put('users', JSON.stringify(newUsers));
+        console.log('Migration v1 successful: created admin user with legacy vault.');
       }
-    };
-    await env.KV_AI_PROXY.put('users', JSON.stringify(newUsers));
-    await env.KV_AI_PROXY.put(MIGRATION_KV_KEY, 'true');
-    console.log('Migration successful: created admin user with legacy vault.');
+      await env.KV_AI_PROXY.put(MIGRATION_KV_KEY, 'true');
+    }
+
+    // ── v2: multi-group bootstrap ────────────────────────────────────
+    const groupsMigrationDone = await env.KV_AI_PROXY.get(GROUPS_MIGRATION_KV_KEY);
+    if (groupsMigrationDone === 'true') {
+      return;
+    }
+
+    const legacyVault = await env.KV_AI_PROXY.get(LEGACY_VAULT_KV_KEY);
+    if (!legacyVault) {
+      console.log('Migration v2 skipped: no legacy vault found.');
+      await env.KV_AI_PROXY.put(GROUPS_MIGRATION_KV_KEY, 'true');
+      return;
+    }
+
+    const groups = await loadGroups(env.KV_AI_PROXY);
+    if (!groups[DEFAULT_GROUP_ID]) {
+      groups[DEFAULT_GROUP_ID] = {
+        name: 'Default',
+        createdAt: Date.now(),
+        createdBy: 'migration',
+        legacy: true,
+      };
+      await saveGroups(env.KV_AI_PROXY, groups);
+    }
+
+    // Attach legacy-vault users to the default group; the master-token user
+    // becomes superadmin. Users with their own vault are left untouched.
+    const users = ((await env.KV_AI_PROXY.get('users', 'json')) ?? {}) as Record<string, any>;
+    let usersChanged = false;
+    for (const record of Object.values(users)) {
+      if (!record || typeof record !== 'object') continue;
+      if (record.key === env.AI_JSON_CRYPTOKEN && record.role !== 'superadmin') {
+        record.role = 'superadmin';
+        usersChanged = true;
+      }
+      if (!record.groupId && (!record.vaultId || record.vaultId === 'legacy')) {
+        record.groupId = DEFAULT_GROUP_ID;
+        delete record.vaultId;
+        usersChanged = true;
+      }
+    }
+    if (usersChanged) {
+      await env.KV_AI_PROXY.put('users', JSON.stringify(users));
+    }
+
+    await env.KV_AI_PROXY.put(GROUPS_MIGRATION_KV_KEY, 'true');
+    console.log('Migration v2 successful: default group created and users attached.');
   } catch (err) {
     console.error('Migration failed:', err);
   }

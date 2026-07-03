@@ -15,37 +15,23 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
+/**
+ * @file Embedded @sctg/cline-chatbot panel — replaces the legacy playground.
+ * The chatbot shares the vault session token (sessionStorage 'ai_vault_token')
+ * with this dashboard, so an authenticated user lands directly in the chat.
+ */
 
-import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
-import tailwindcss from '@tailwindcss/vite';
+import React from 'react';
+import { Chatbot } from '@sctg/cline-chatbot';
+import '@sctg/cline-chatbot/style.css';
 
-// https://vitejs.dev/config/
-export default defineConfig({
-  define: {
-    'import.meta.env.VAULT_URL': JSON.stringify(process.env.VAULT_URL || 'https://ai-proxy.inet.pp.ua'),
-  },
-  plugins: [
-    // React plugin enables JSX transform and Fast Refresh in development
-    react(),
-    // Tailwind CSS v4 Vite plugin — processes @import "tailwindcss" at build time
-    tailwindcss(),
-  ],
-  resolve: {
-    alias: {
-      // Alias for the `@sctg/cline-llms` package to use the local tarball during development
-      '@sctg/cline-chatbot': '@sctg/cline-chatbot',
-    },
-  },
-  optimizeDeps: {
-     include: ['react', 'react-dom'],
-  },
-  build: {
-    rollupOptions: {
-      external: ['react', 'react-dom'],
-    },
-  },
-  server: {
-    port: 3000,
-  },
-});
+/** Base URL of the vault/usage Worker (same host for both roles). */
+const WORKER_URL = import.meta.env.VAULT_URL as string;
+
+export const ChatbotPanel: React.FC = () => {
+  return (
+    <div className="h-[calc(100vh-8rem)] overflow-hidden rounded-lg border border-default-200">
+      <Chatbot vaultUrl={WORKER_URL} usageDbUrl={WORKER_URL} className="h-full" />
+    </div>
+  );
+};
