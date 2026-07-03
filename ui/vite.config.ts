@@ -31,19 +31,8 @@ export default defineConfig({
     // Tailwind CSS v4 Vite plugin — processes @import "tailwindcss" at build time
     tailwindcss(),
   ],
-  resolve: {
-    alias: {
-      // Alias for the `@sctg/cline-llms` package to use the local tarball during development
-      '@sctg/cline-chatbot': '@sctg/cline-chatbot',
-    },
-  },
   optimizeDeps: {
      include: ['react', 'react-dom'],
-  },
-  build: {
-    rollupOptions: {
-      external: ['react', 'react-dom'],
-    },
   },
   server: {
     port: 3000,
