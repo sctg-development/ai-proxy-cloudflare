@@ -16,9 +16,52 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// @sctg/cline-chatbot bundles its agent Web Worker as a standalone file with a
+// hardcoded absolute URL (e.g. `/assets/agent.worker-<hash>.js`) that it expects
+// the host app to serve as-is. This plugin copies that file from the package's
+// dist-lib/assets into this app's dev server and build output so the hash always
+// matches whatever version of the package is installed.
+function clineChatbotWorkerAssets(): Plugin {
+  const assetsDir = path.resolve(dirname, 'node_modules/@sctg/cline-chatbot/dist-lib/assets');
+  let outDir = 'dist';
+  return {
+    name: 'cline-chatbot-worker-assets',
+    configResolved(config) {
+      outDir = config.build.outDir;
+    },
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const url = req.url?.split('?')[0] ?? '';
+        if (url.startsWith('/assets/')) {
+          const filePath = path.join(assetsDir, path.basename(url));
+          if (fs.existsSync(filePath)) {
+            res.setHeader('Content-Type', 'text/javascript');
+            fs.createReadStream(filePath).pipe(res);
+            return;
+          }
+        }
+        next();
+      });
+    },
+    closeBundle() {
+      if (!fs.existsSync(assetsDir)) return;
+      const destDir = path.resolve(outDir, 'assets');
+      fs.mkdirSync(destDir, { recursive: true });
+      for (const file of fs.readdirSync(assetsDir)) {
+        fs.copyFileSync(path.join(assetsDir, file), path.join(destDir, file));
+      }
+    },
+  };
+}
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -30,6 +73,8 @@ export default defineConfig({
     react(),
     // Tailwind CSS v4 Vite plugin — processes @import "tailwindcss" at build time
     tailwindcss(),
+    // Serves/copies @sctg/cline-chatbot's standalone agent Web Worker asset
+    clineChatbotWorkerAssets(),
   ],
   optimizeDeps: {
      include: ['react', 'react-dom'],
