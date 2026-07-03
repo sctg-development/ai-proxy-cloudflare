@@ -35,9 +35,23 @@ def strip_jsonc_comments(text: str) -> str:
     # Remove /* ... */ block comments (non-greedy, across newlines)
     text = re.sub(r'/\*.*?\*/', '', text, flags=re.DOTALL)
     # Remove // line comments (not inside strings)
-    # This simple approach removes everything from // to end-of-line;
-    # it is sufficient for wrangler.jsonc files which don't put // inside string values.
-    text = re.sub(r'//[^\n]*', '', text)
+    # This improved approach avoids removing comments inside strings
+    lines = text.split('\n')
+    cleaned_lines = []
+    for line in lines:
+        # Check if the line contains a comment outside of a string
+        in_string = False
+        cleaned_line = ''
+        i = 0
+        while i < len(line):
+            if line[i] == '"' and (i == 0 or line[i-1] != '\\'):
+                in_string = not in_string
+            if not in_string and line[i:i+2] == '//':
+                break
+            cleaned_line += line[i]
+            i += 1
+        cleaned_lines.append(cleaned_line)
+    text = '\n'.join(cleaned_lines)
     return text
 
 # All .env variables will be treated as secrets in generated wrangler.jsonc.

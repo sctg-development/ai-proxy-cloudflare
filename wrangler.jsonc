@@ -1,84 +1,62 @@
 {
-    "$schema": "node_modules/wrangler/config-schema.json",
-    "name": "ai-proxy-cloudflare",
-    "main": "src/index.ts",
-    "compatibility_date": "2024-12-13",
-    "compatibility_flags": [
-        "nodejs_compat"
-    ],
-    // ── Build defines ──────────────────────────────────────────────────────
-    // @sctg/cline-llms is built by Bun and calls createRequire(import.meta.url)
-    // at module scope; wrangler's bundler leaves import.meta.url undefined,
-    // which crashes workerd at startup. Pin it to a synthetic file URL.
-    "define": {
-        "import.meta.url": "'file:///worker/index.js'"
-    },
-    // ── Bundle aliases ─────────────────────────────────────────────────────
-    // The universal endpoint pulls in @sctg/cline-llms, whose builtin registry
-    // references every vendor family. Only openai/openai-compatible, anthropic,
-    // google (gemini), mistral, cohere and poolside are reachable through
-    // keypoollive vaults; the rest are Node-only or heavy and are stubbed out
-    // of the Worker bundle (see src/lib/stubs/unavailable-provider.cjs).
-    "alias": {
-        "@ai-sdk/amazon-bedrock": "./src/lib/stubs/unavailable-provider.cjs",
-        "@aws-sdk/credential-providers": "./src/lib/stubs/unavailable-provider.cjs",
-        "@ai-sdk/google-vertex": "./src/lib/stubs/unavailable-provider.cjs",
-        "@ai-sdk/google-vertex/anthropic": "./src/lib/stubs/unavailable-provider.cjs",
-        "@jerome-benoit/sap-ai-provider": "./src/lib/stubs/unavailable-provider.cjs",
-        "@langfuse/otel": "./src/lib/stubs/unavailable-provider.cjs",
-        "@opentelemetry/sdk-trace-node": "./src/lib/stubs/unavailable-provider.cjs",
-        "ai-sdk-provider-claude-code": "./src/lib/stubs/unavailable-provider.cjs",
-        "ai-sdk-provider-codex-cli": "./src/lib/stubs/unavailable-provider.cjs",
-        "ai-sdk-provider-opencode-sdk": "./src/lib/stubs/unavailable-provider.cjs",
-        "dify-ai-provider": "./src/lib/stubs/unavailable-provider.cjs"
-    },
-    // ── Environment variables (plaintext) ──────────────────────────────────
-    "vars": {
-        "DEBUG": "false",
-        // Set to your Fufuni merchant backend URL to enable AI token balance enforcement.
-        // Leave empty ("") or omit to run in standalone mode (no balance enforcement).
-        "FUFUNI_MERCHANT_URL": ""
-    },
-    // ── Secrets (loaded from .dev.vars or Wrangler secrets) ────────────────
-    // Set via: wrangler secret put CLOUDFLARE_ACCOUNT_ID
-    //          wrangler secret put AI_JSON_CRYPTOKEN
-    //          wrangler secret put CLOUDFLARE_AIG_TOKEN
-    //          wrangler secret put AI_BALANCE_SHARED_SECRET  (required when FUFUNI_MERCHANT_URL is set)
-    // ── KV Namespace binding ───────────────────────────────────────────────
-    "kv_namespaces": [
-        {
-            "binding": "KV_AI_PROXY",
-            "id": "0f6936bc4d9b4d5fa1cc85acd757e354"
-        }
-    ],
-    // ── Durable Objects for Usage DB ──────────────────────────────────────
-    "durable_objects": {
-        "bindings": [
-            {
-                "name": "USAGE_DO",
-                "class_name": "UsageDbDurableObject"
-            }
-        ]
-    },
-    "migrations": [
-        {
-            "tag": "v1_usage_do_sqlite",
-            "new_sqlite_classes": ["UsageDbDurableObject"]
-        }
-    ],
-    // ── Rate limiting via Durable Objects ──────────────────────────────────
-    "ratelimits": [
-        {
-            "name": "PROXY_RATE_LIMITER",
-            "namespace_id": "1001",
-            "simple": {
-                "limit": 10,
-                "period": 60
-            }
-        }
-    ],
-    // ── Observability ─────────────────────────────────────────────────────
-    "observability": {
-        "enabled": true
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ai-proxy-cloudflare",
+  "main": "src/index.ts",
+  "compatibility_date": "2024-12-13",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "define": {
+    "import.meta.url": "'file:///worker/index.js'"
+  },
+  "alias": {
+    "@ai-sdk/amazon-bedrock": "./src/lib/stubs/unavailable-provider.cjs",
+    "@aws-sdk/credential-providers": "./src/lib/stubs/unavailable-provider.cjs",
+    "@ai-sdk/google-vertex": "./src/lib/stubs/unavailable-provider.cjs",
+    "@ai-sdk/google-vertex/anthropic": "./src/lib/stubs/unavailable-provider.cjs",
+    "@jerome-benoit/sap-ai-provider": "./src/lib/stubs/unavailable-provider.cjs",
+    "@langfuse/otel": "./src/lib/stubs/unavailable-provider.cjs",
+    "@opentelemetry/sdk-trace-node": "./src/lib/stubs/unavailable-provider.cjs",
+    "ai-sdk-provider-claude-code": "./src/lib/stubs/unavailable-provider.cjs",
+    "ai-sdk-provider-codex-cli": "./src/lib/stubs/unavailable-provider.cjs",
+    "ai-sdk-provider-opencode-sdk": "./src/lib/stubs/unavailable-provider.cjs",
+    "dify-ai-provider": "./src/lib/stubs/unavailable-provider.cjs"
+  },
+  "vars": {
+    "DEBUG": "false",
+    "FUFUNI_MERCHANT_URL": ""
+  },
+  "kv_namespaces": [
+    {
+      "binding": "KV_AI_PROXY",
+      "id": "0f6936bc4d9b4d5fa1cc85acd757e354"
     }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "USAGE_DO",
+        "class_name": "UsageDbDurableObject"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1_usage_do_sqlite",
+      "new_sqlite_classes": ["UsageDbDurableObject"]
+    }
+  ],
+  "ratelimits": [
+    {
+      "name": "PROXY_RATE_LIMITER",
+      "namespace_id": "1001",
+      "simple": {
+        "limit": 10,
+        "period": 60
+      }
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
 }
