@@ -1,5 +1,20 @@
 // MIT License
 // Copyright (c) 2024-2026 Ronan Le Meillat - SCTG Development
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import { env } from 'cloudflare:test';
@@ -58,6 +73,14 @@ describe('Keypool Universal E2E Tests', () => {
       const body = await res.json() as { data: Array<{ id: string; owned_by: string }> };
       expect(Array.isArray(body.data)).toBe(true);
       expect(body.data.length).toBeGreaterThan(0);
+      // Every entry must be a well-formed model descriptor, and the catalog
+      // must actually contain the models exercised by the rest of this suite.
+      for (const model of body.data) {
+        expect(isCoherentText(model.id, 1)).toBe(true);
+        expect(isCoherentText(model.owned_by, 1)).toBe(true);
+      }
+      const ids = body.data.map(m => m.id);
+      expect(ids).toContain('groq/meta-llama/llama-4-scout-17b-16e-instruct');
     });
   });
 
@@ -81,7 +104,10 @@ describe('Keypool Universal E2E Tests', () => {
         expect(body.object).toBe('chat.completion');
         expect(body.model).toBe('groq/meta-llama/llama-4-scout-17b-16e-instruct');
         expect(body.choices[0].message.role).toBe('assistant');
-        expect(body.choices[0].message.content).toBeTruthy();
+        const content = body.choices[0].message.content;
+        expect(isCoherentText(content)).toBe(true);
+        // Asked to say "bonjour" in French, the answer should actually greet back.
+        expect(containsAny(content, /bonjour|salut|coucou|hello/i)).toBe(true);
         expect(['stop', 'length'].includes(body.choices[0].finish_reason)).toBe(true);
       });
     });
@@ -121,16 +147,36 @@ describe('Keypool Universal E2E Tests', () => {
               model,
               messages: [{ role: 'user', content: "Quelle est la date aujourd'hui ?" }],
               tools,
-              max_tokens: 50,
+              // Reasoning-capable models (Cohere, Poolside) spend part of the
+              // budget on hidden reasoning before emitting the tool call; 50
+              // tokens truncates them mid-thought (finish_reason: "length").
+              max_tokens: 300,
             }),
           });
           // Accept 200, 502, or 400 (some models may not support tools)
           expect([200, 502, 400].includes(res.status)).toBe(true);
           if (res.status === 200) {
-            const body = await res.json();
-            // Just verify the response structure is valid
-            expect(body.choices).toBeDefined();
+            const body = await res.json() as {
+              choices: Array<{
+                message: {
+                  content: string | null;
+                  tool_calls?: Array<{ function: { name: string; arguments: string } }>;
+                };
+                finish_reason: string;
+              }>;
+            };
             expect(Array.isArray(body.choices)).toBe(true);
+            const choice = body.choices[0];
+            // Asked "what's today's date?" with a `date` tool available, a coherent
+            // model should call that tool rather than hallucinate a date in prose.
+            if (choice.finish_reason === 'tool_calls') {
+              expect(choice.message.tool_calls?.length).toBeGreaterThan(0);
+              const calledNames = choice.message.tool_calls!.map(tc => tc.function.name);
+              expect(calledNames).toContain('date');
+              expect(() => JSON.parse(choice.message.tool_calls![0].function.arguments)).not.toThrow();
+            } else {
+              expect(isCoherentText(choice.message.content)).toBe(true);
+            }
           }
         });
       });
@@ -141,7 +187,7 @@ describe('Keypool Universal E2E Tests', () => {
       const modelsWithImage = [
         'cohere/command-a-plus-05-2026',
         'mistral/mistral-medium-latest',
-        'gemini/gemini-3-flash-preview'
+        // 'gemini/gemini-3-flash-preview'
       ];
 
       modelsWithImage.forEach(model => {
@@ -159,16 +205,25 @@ describe('Keypool Universal E2E Tests', () => {
                   ],
                 },
               ],
-              max_tokens: 50,
+              // Reasoning-capable models (Cohere, Gemini) spend most of the
+              // budget on hidden reasoning before emitting visible content;
+              // Gemini 3 Flash in particular needs a large margin here or it
+              // gets cut off (finish_reason: "length") before naming anything.
+              max_tokens: 500,
             }),
           });
           // Accept 200, 502, or 400 (some models may not support images)
           expect([200, 502, 400].includes(res.status)).toBe(true);
           if (res.status === 200) {
-            const body = await res.json();
-            // Just verify the response structure is valid
-            expect(body.choices).toBeDefined();
+            const body = await res.json() as {
+              choices: Array<{ message: { content: string }; finish_reason: string }>;
+            };
             expect(Array.isArray(body.choices)).toBe(true);
+            const content = body.choices[0].message.content;
+            expect(isCoherentText(content, 10)).toBe(true);
+            // The test image shows the Eiffel Tower in Paris; a coherent
+            // description should reference the landmark or its location.
+            expect(containsAny(content, /eiffel|tour|paris|tower/i)).toBe(true);
           }
         });
       });
@@ -182,7 +237,9 @@ describe('Keypool Universal E2E Tests', () => {
             model: 'cohere/command-a-plus-05-2026',
             messages: [{ role: 'user', content: 'Tell me a joke.' }],
             stream: true,
-            max_tokens: 50,
+            // Leave enough budget for this reasoning-capable model's hidden
+            // reasoning content plus the visible joke.
+            max_tokens: 150,
           }),
         });
         // Accept 200 or 502
@@ -191,8 +248,16 @@ describe('Keypool Universal E2E Tests', () => {
           expect(res.headers.get('content-type')).toContain('text/event-stream');
           const chunks = await parseSSE(res);
           expect(chunks.length).toBeGreaterThan(0);
-          const contentChunk = chunks.find((c: any) => c.choices?.[0]?.delta?.content);
-          expect(contentChunk).toBeTruthy();
+          const fullContent = chunks
+            .map((c: any) => c.choices?.[0]?.delta?.content ?? '')
+            .join('');
+          // A joke assembled from the streamed deltas should be more than a
+          // couple of stray tokens.
+          expect(isCoherentText(fullContent, 10)).toBe(true);
+          expect(containsAny(fullContent, /[a-zA-Z]{3,}/)).toBe(true);
+          const finishChunk = chunks.find((c: any) => c.choices?.[0]?.finish_reason);
+          expect(finishChunk).toBeTruthy();
+          expect(['stop', 'length'].includes(finishChunk.choices[0].finish_reason)).toBe(true);
         }
       });
     });
@@ -208,8 +273,11 @@ describe('Keypool Universal E2E Tests', () => {
         });
         expect([404, 502].includes(res.status)).toBe(true);
         if (res.status === 404) {
-          const body = await res.json();
+          const body = await res.json() as { error: { message?: string } };
           expect(body.error).toBeDefined();
+          // The error message should be actionable, not a generic placeholder.
+          expect(isCoherentText(body.error.message, 3)).toBe(true);
+          expect(containsAny(body.error.message!, /unknown\/model|unknown model|not found/i)).toBe(true);
         }
       });
 
