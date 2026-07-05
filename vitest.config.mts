@@ -57,6 +57,8 @@ export default defineConfig({
 					// after completion (tooling issue, not app logic), failing the
 					// suite. Run with `RUN_SDK_TESTS=1 npm test` to include them.
 					RUN_SDK_TESTS: process.env.RUN_SDK_TESTS ?? '',
+					KEYPOOL_UNIVERSAL_BASE_URL: process.env.KEYPOOL_UNIVERSAL_BASE_URL ?? '',
+					KEYPOOL_UNIVERSAL_BEARER: process.env.KEYPOOL_UNIVERSAL_BEARER ?? '',
 				},
 			},
 		}),

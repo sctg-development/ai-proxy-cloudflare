@@ -10,6 +10,7 @@
     "deploy": "wrangler deploy",
     "build": "wrangler deploy --dry-run",
     "test": "vitest",
+    "test:e2e": "vitest --run test/keypool.universal.e2e.test.ts",
     "typegen": "wrangler types"
   },
   "dependencies": {
