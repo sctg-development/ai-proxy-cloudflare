@@ -206,10 +206,11 @@ describe('Keypool Universal E2E Tests', () => {
                 },
               ],
               // Reasoning-capable models (Cohere, Gemini) spend most of the
-              // budget on hidden reasoning before emitting visible content;
-              // Gemini 3 Flash in particular needs a large margin here or it
-              // gets cut off (finish_reason: "length") before naming anything.
-              max_tokens: 500,
+              // budget on hidden reasoning before emitting visible content,
+              // with a variable-length reasoning phase; a generous margin
+              // keeps them from being cut off (finish_reason: "length")
+              // before naming anything recognizable in the image.
+              max_tokens: 800,
             }),
           });
           // Accept 200, 502, or 400 (some models may not support images)
