@@ -124,6 +124,7 @@ export function selectModel(provider: AiProvider): AiModel {
 /**
  * Encrypt a vault configuration using the same algorithm as OpenSSL.
  * This is the reverse operation of decryptAiConfig.
+ * each line is only 64 characters long, except the last line which may be shorter.
  *
  * @param plaintext - The JSON string to encrypt
  * @param password - The encryption password
@@ -184,6 +185,9 @@ export async function encryptVault(
   result.set(new Uint8Array(encrypted), saltedHeader.length + salt.length);
 
   // Return as Base64
-  return btoa(String.fromCharCode(...result));
+  const base64SingleLine = btoa(String.fromCharCode(...result));
+  // Wrap at 64 characters per line
+  const wrapped = base64SingleLine.match(/.{1,64}/g)?.join('\n') ?? '';
+  return wrapped;
 }
 
