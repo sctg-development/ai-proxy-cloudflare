@@ -232,7 +232,7 @@ app.get("/ai.json.enc", async (c) => {
 		const token = extractBearerToken(c.req.header("Authorization") || null);
 		if (token) {
 			const ctx = await getUserContext(c.env.KV_AI_PROXY, token, c.env.AI_JSON_CRYPTOKEN);
-			console.log(`GET /ai.json.enc with token: ${token}, group: ${ctx?.group}, groupId: ${ctx?.groupId}, vaultId: ${ctx?.vaultId}, isLegacy: ${ctx?.isLegacy}`);
+			console.log(`GET /ai.json.enc with token: ${token}, groupId: ${ctx?.groupId}, vaultId: ${ctx?.vaultId}, isLegacy: ${ctx?.isLegacy}`);
 			if (ctx?.groupId && ctx.group) {
 				const config = await loadGroupConfig(c.env, ctx.groupId, ctx.group);
 				const reEncrypted = await encryptVault(JSON.stringify(config), token);
