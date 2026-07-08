@@ -19,6 +19,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
+import { sctgChatbotWorkerAssets } from '@sctg/cline-chatbot/vite-plugin'
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -30,6 +31,13 @@ export default defineConfig({
     react(),
     // Tailwind CSS v4 Vite plugin — processes @import "tailwindcss" at build time
     tailwindcss(),
+    // Copies @sctg/cline-chatbot's agent Web Worker + its sibling chunk
+    // files (tool implementations, provider clients, etc.) into this app's
+    // own build output. Without this, `vite build` never discovers those
+    // files (they're only referenced by the worker's own pre-built internal
+    // `import()` calls, invisible to Vite's static asset analysis), so they
+    // 404 once deployed even though `vite`/dev mode works fine without it.
+    sctgChatbotWorkerAssets(),
   ],
   optimizeDeps: {
      include: ['react', 'react-dom'],
