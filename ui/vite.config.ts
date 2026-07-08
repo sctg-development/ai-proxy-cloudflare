@@ -19,7 +19,6 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
-import { sctgChatbotWorkerAssets } from '@sctg/cline-chatbot/vite-plugin'
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -31,8 +30,6 @@ export default defineConfig({
     react(),
     // Tailwind CSS v4 Vite plugin — processes @import "tailwindcss" at build time
     tailwindcss(),
-    // @sctg/cline-chatbot plugin
-    sctgChatbotWorkerAssets(),
   ],
   optimizeDeps: {
      include: ['react', 'react-dom'],
