@@ -36,6 +36,11 @@ type DurableObjectStub = any;
 export type UsagePeriod = "hour" | "day" | "week" | "month";
 
 /**
+ * Granularity for grouping statistics within a period.
+ */
+export type Granularity = "hour" | "day" | "week" | "month";
+
+/**
  * Represents a successful API request that consumed tokens from a pooled key.
  * Compatible with KeyUsageEntry from KeypoolUsageDb.ts
  */
@@ -413,11 +418,16 @@ export class UsageDbDurableObject extends DurableObject {
 	}
 
 	/**
-	 * Get usage statistics grouped by period.
+	 * Get usage statistics grouped by period and granularity.
+	 * @param period - The time period (hour, day, week, month)
+	 * @param granularity - The granularity for grouping within the period (hour, day, week, month)
 	 */
-	async getUsageStats(period: UsagePeriod): Promise<KeyUsageStat[]> {
+	async getUsageStats(period: UsagePeriod, granularity?: Granularity): Promise<KeyUsageStat[]> {
 		const cutoff = periodCutoffMs(period);
 		const cutoffHour = formatPeriodLabel(cutoff, "hour");
+
+		// Use granularity for labeling, fall back to period if not provided
+		const labelGranularity = granularity || period;
 
 		// Read hourly records from SQLite
 		const cursor = this.sql.exec(
@@ -425,10 +435,10 @@ export class UsageDbDurableObject extends DurableObject {
 			cutoffHour,
 		);
 
-		// Aggregate by requested period
+		// Aggregate by requested granularity
 		const map = new Map<string, KeyUsageStat>();
 		for (const row of cursor) {
-			const label = formatPeriodLabel(parseHourBucket(row.period_hour), period);
+			const label = formatPeriodLabel(parseHourBucket(row.period_hour), labelGranularity);
 			const mapKey = `${label}\x00${row.provider}\x00${row.key_owner}\x00${row.key_hint}`;
 
 			const existing = map.get(mapKey);
@@ -843,16 +853,18 @@ export async function recordError(
  * @param usageDo - Durable Object namespace
  * @param userId - User identifier (Bearer token)
  * @param period - Time period for filtering statistics (hour|day|week|month)
+ * @param granularity - Granularity for grouping data within the period (hour|day|week|month, optional)
  * @returns Array of KeyUsageStat objects containing aggregated usage statistics
  */
 export async function getUsageStats(
 	usageDo: DurableObjectNamespace,
 	userId: string,
 	period: UsagePeriod,
+	granularity?: Granularity,
 ): Promise<KeyUsageStat[]> {
 	try {
 		const stub = await getUsageStub(usageDo, userId);
-		return await stub.getUsageStats(period);
+		return await stub.getUsageStats(period, granularity);
 	} catch (e) {
 		console.error("[usage-db] Failed to get usage stats:", e);
 		return [];

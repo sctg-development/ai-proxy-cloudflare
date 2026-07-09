@@ -58,6 +58,7 @@ import {
 	type KeyUsageEntry,
 	type KeyErrorEntry,
 	type UsagePeriod,
+	type Granularity,
 } from "./lib/usage-db";
 import type { AiConfig, AiKey, AiModel, AiProvider } from "./types/ai-config";
 /**
@@ -798,12 +799,14 @@ app.post("/v1/keypool/error", async (c) => {
 /**
  * GET /v1/keypool/stats
  *
- * Get usage statistics grouped by period.
- * Query params: period (hour|day|week|month, default: day)
+ * Get usage statistics grouped by period and granularity.
+ * Query params:
+ *   - period (hour|day|week|month, default: day)
+ *   - granularity (hour|day|week|month, optional)
  * Requires a valid user Bearer token.
  * 
  * ```bash
- * curl -X GET "https://your-worker-url/v1/keypool/stats?period=day" \
+ * curl -X GET "https://your-worker-url/v1/keypool/stats?period=day&granularity=hour" \
  *      -H	 "Authorization: Bearer <user-token>"
  * ```
  */
@@ -816,7 +819,8 @@ app.get("/v1/keypool/stats", async (c) => {
 	const { userId } = identity;
 
 	const period = (c.req.query("period") as UsagePeriod) || "day";
-	const stats = await getUsageStats(env.USAGE_DO, userId, period);
+	const granularity = c.req.query("granularity") as Granularity | undefined;
+	const stats = await getUsageStats(env.USAGE_DO, userId, period, granularity);
 	return c.json({ object: "list", data: stats });
 });
 

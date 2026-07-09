@@ -45,7 +45,8 @@ import {
   Webhook,
   X,
   Cloud,
-} from 'lucide-react';
+   BarChart,
+ } from 'lucide-react';
 import type { AiConfig, AiModel } from '../types/ai-config';
 import {
   canDiscoverProviderModels,
@@ -56,6 +57,7 @@ import {
 import { validateAiConfigSchema } from '../lib/utils/file-utils';
 import { ChatbotPanel } from './chatbot-panel';
 import { AdminPanel } from './admin-panel';
+import { StatsPanel } from './stats-panel';
 import { ProviderCard } from './ui/ProviderCard';
 import { CrawlerCard } from './ui/CrawlerCard';
 import { WeatherApiCard } from './ui/WeatherApiCard';
@@ -856,6 +858,12 @@ export const Dashboard: React.FC = () => {
                     Weather APIs
                   </div>
                 </Tabs.Tab>
+                 <Tabs.Tab id="stats">
+                   <div className="flex items-center gap-2">
+                     <BarChart className="h-4 w-4" />
+                     Statistics
+                   </div>
+                 </Tabs.Tab>
                 {(userContext?.role === 'admin' || userContext?.role === 'superadmin') && (
                   <Tabs.Tab id="admin">
                     <div className="flex items-center gap-2">
@@ -1039,6 +1047,9 @@ export const Dashboard: React.FC = () => {
               </div>
             </Tabs.Panel>
 
+            <Tabs.Panel id="stats" className="mt-6">
+              <StatsPanel />
+            </Tabs.Panel>
             {(userContext?.role === 'admin' || userContext?.role === 'superadmin') && (
               <Tabs.Panel id="admin" className="mt-6">
                 <AdminPanel />
