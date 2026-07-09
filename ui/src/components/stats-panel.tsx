@@ -48,6 +48,7 @@ export const StatsPanel: React.FC = () => {
   const [statsData, setStatsData] = useState<StatsData[]>([]);
   const [timeWindow, setTimeWindow] = useState<string>('day');
   const [granularity, setGranularity] = useState<string>('');
+  const [chartType, setChartType] = useState<'line' | 'bar'>('line');
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -196,6 +197,22 @@ export const StatsPanel: React.FC = () => {
               </ListBox>
             </Select.Popover>
           </Select>
+          <Select
+            selectedKey={chartType}
+            onSelectionChange={(key) => setChartType(key as 'line' | 'bar')}
+            className="w-[150px]"
+          >
+            <Select.Trigger>
+              <Select.Value>{chartType === 'line' ? 'Line' : 'Bar'}</Select.Value>
+              <Select.Indicator />
+            </Select.Trigger>
+            <Select.Popover>
+              <ListBox>
+                <ListBox.Item id="line" textValue="Line">Line</ListBox.Item>
+                <ListBox.Item id="bar" textValue="Bar">Bar</ListBox.Item>
+              </ListBox>
+            </Select.Popover>
+          </Select>
           <Button size="sm" onPress={fetchStats} isPending={loading}>
             Refresh
           </Button>
@@ -220,7 +237,7 @@ export const StatsPanel: React.FC = () => {
             </div>
           ) : chartData.length > 0 ? (
             <ResponsiveContainer width="100%" height={300}>
-              {granularity === 'hour' ? (
+              {chartType === 'line' ? (
                 <LineChart data={chartData}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="period" />
