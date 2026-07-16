@@ -24,7 +24,7 @@
     "@cloudflare/workers-types": "^5.20260716.1",
     "@types/node": "^25.9.1",
     "fast-glob": "^3.3.3",
-    "typescript": "^6.0.3",
+    "typescript": "^7.0.2",
     "vitest": "4.1.10",
     "wrangler": "^4.111.0"
   }
