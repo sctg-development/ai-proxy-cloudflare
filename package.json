@@ -14,18 +14,18 @@
     "typegen": "wrangler types"
   },
   "dependencies": {
-    "@sctg/cline-llms": "^4.0.0-beta.20260706140721",
-    "@sctg/cline-sdk": "^4.0.0-beta.20260706140721",
-    "@sctg/cline-shared": "^4.0.0-beta.20260706140721",
-    "hono": "^4.12.21"
+    "@sctg/cline-llms": "^4.0.0-beta.20260716182209",
+    "@sctg/cline-sdk": "^4.0.0-beta.20260716182209",
+    "@sctg/cline-shared": "^4.0.0-beta.20260716182209",
+    "hono": "^4.12.30"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.16.7",
-    "@cloudflare/workers-types": "^4.20260520.1",
+    "@cloudflare/vitest-pool-workers": "^0.18.5",
+    "@cloudflare/workers-types": "^5.20260716.1",
     "@types/node": "^25.9.1",
     "fast-glob": "^3.3.3",
     "typescript": "^6.0.3",
-    "vitest": "4.1.7",
-    "wrangler": "^4.93.0"
+    "vitest": "4.1.10",
+    "wrangler": "^4.111.0"
   }
 }
