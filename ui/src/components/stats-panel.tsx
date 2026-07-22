@@ -18,7 +18,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { Button, Select, ListBox, Table, Typography } from '@heroui/react';
-import { ApiService } from '../lib/api';
+import { ApiService, type QuotaObservation } from '../lib/api';
 import * as XLSX from 'xlsx';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
@@ -51,6 +51,7 @@ export const StatsPanel: React.FC = () => {
   const [chartType, setChartType] = useState<'line' | 'bar'>('line');
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [quotaObservations, setQuotaObservations] = useState<QuotaObservation[]>([]);
 
   const fetchStats = async () => {
     setLoading(true);
@@ -91,6 +92,34 @@ export const StatsPanel: React.FC = () => {
   useEffect(() => {
     fetchStats();
   }, [timeWindow, granularity]);
+
+  useEffect(() => {
+    // Descriptive only, for now Mistral is the only provider this applies to.
+    ApiService.getQuotaObservations('mistral')
+      .then(setQuotaObservations)
+      .catch((err) => console.error('Failed to fetch quota observations:', err));
+  }, []);
+
+  // Average usage-until-exhaustion per key across all recorded months —
+  // a rough, growing estimate of each key's real monthly quota.
+  const quotaEstimates = Object.values(
+    quotaObservations.reduce<Record<string, { keyOwner: string; keyHint: string; samples: number; totalTokens: number; lastObservedAt: string }>>(
+      (acc, obs) => {
+        const mapKey = `${obs.keyOwner}\x00${obs.keyHint}`;
+        const existing = acc[mapKey];
+        const tokens = obs.promptTokens + obs.completionTokens;
+        if (existing) {
+          existing.samples += 1;
+          existing.totalTokens += tokens;
+          if (obs.observedAt > existing.lastObservedAt) existing.lastObservedAt = obs.observedAt;
+        } else {
+          acc[mapKey] = { keyOwner: obs.keyOwner, keyHint: obs.keyHint, samples: 1, totalTokens: tokens, lastObservedAt: obs.observedAt };
+        }
+        return acc;
+      },
+      {},
+    ),
+  ).sort((a, b) => b.lastObservedAt.localeCompare(a.lastObservedAt));
 
   useEffect(() => {
     if (apiStatsData.length === 0) {
@@ -357,6 +386,47 @@ export const StatsPanel: React.FC = () => {
                 ) : (
                   <Table.Row>
                     <Table.Cell colSpan={3} className="text-center">No data available</Table.Cell>
+                  </Table.Row>
+                )}
+              </Table.Body>
+            </Table.Content>
+          </Table.ScrollContainer>
+        </Table>
+      </div>
+
+      <div className="bg-surface p-4 rounded-lg shadow">
+        <Typography type="h3" className="text-md font-semibold mb-4">
+          Quota estimates (Mistral)
+        </Typography>
+        <p className="text-sm text-muted-foreground mb-4">
+          Average usage recorded up to the moment each key was flagged quota-exhausted,
+          across every recorded month — a growing estimate of each key's real quota, not
+          yet used to influence key selection.
+        </p>
+        <Table>
+          <Table.ScrollContainer>
+            <Table.Content aria-label="Quota estimates">
+              <Table.Header>
+                <Table.Column isRowHeader>Key owner</Table.Column>
+                <Table.Column>Key</Table.Column>
+                <Table.Column>Samples</Table.Column>
+                <Table.Column>Avg. tokens at exhaustion</Table.Column>
+                <Table.Column>Last observed</Table.Column>
+              </Table.Header>
+              <Table.Body>
+                {quotaEstimates.length > 0 ? (
+                  quotaEstimates.map((estimate) => (
+                    <Table.Row key={`${estimate.keyOwner}\x00${estimate.keyHint}`}>
+                      <Table.Cell>{estimate.keyOwner}</Table.Cell>
+                      <Table.Cell className="font-mono">{estimate.keyHint}</Table.Cell>
+                      <Table.Cell>{estimate.samples}</Table.Cell>
+                      <Table.Cell>{Math.round(estimate.totalTokens / estimate.samples).toLocaleString()}</Table.Cell>
+                      <Table.Cell>{new Date(estimate.lastObservedAt).toISOString().slice(0, 10)}</Table.Cell>
+                    </Table.Row>
+                  ))
+                ) : (
+                  <Table.Row>
+                    <Table.Cell colSpan={5} className="text-center">No quota observations recorded yet</Table.Cell>
                   </Table.Row>
                 )}
               </Table.Body>

@@ -105,6 +105,32 @@ export interface KeyErrorStat {
 	lastErrorCode: number | null;
 }
 
+/**
+ * Recorded whenever a key is newly flagged quota-exhausted. `periodStart` is
+ * the previous `quotaResetAt` (or start of the current UTC month if the key
+ * had never been flagged before) — the observation sums `usage_hourly` for
+ * that key from `periodStart` up to the moment of exhaustion, giving a
+ * sample of "how much usage this key's quota actually allows".
+ */
+export interface QuotaObservationEntry {
+	provider: string;
+	keyOwner: string;
+	keyHint: string;
+	periodStart: string;
+}
+
+/** One recorded quota-exhaustion observation, as read back for display. */
+export interface QuotaObservationStat {
+	provider: string;
+	keyOwner: string;
+	keyHint: string;
+	observedAt: string;
+	periodStart: string;
+	promptTokens: number;
+	completionTokens: number;
+	requestCount: number;
+}
+
 // ─── Internal record shapes ───────────────────────────────────────────────────
 
 /**
@@ -337,9 +363,25 @@ export class UsageDbDurableObject extends DurableObject {
 			);
 		`);
 
+		// One row per detected quota exhaustion, sampling usage-until-exhaustion
+		// so the trend can be tracked across months (see recordQuotaObservation).
+		this.sql.exec(`
+			CREATE TABLE IF NOT EXISTS quota_observations (
+				provider TEXT NOT NULL,
+				key_owner TEXT NOT NULL,
+				key_hint TEXT NOT NULL,
+				observed_at INTEGER NOT NULL,
+				period_start TEXT NOT NULL,
+				prompt_tokens INTEGER NOT NULL DEFAULT 0,
+				completion_tokens INTEGER NOT NULL DEFAULT 0,
+				request_count INTEGER NOT NULL DEFAULT 0
+			);
+		`);
+
 		// Indexes for faster queries
 		this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_usage_hourly_period ON usage_hourly(period_hour);`);
 		this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_errors_hourly_period ON errors_hourly(period_hour);`);
+		this.sql.exec(`CREATE INDEX IF NOT EXISTS idx_quota_observations_provider ON quota_observations(provider, observed_at);`);
 	}
 
 	/**
@@ -526,6 +568,73 @@ export class UsageDbDurableObject extends DurableObject {
 
 		// Sort by descending error rate
 		return result.sort((a, b) => b.errorRate - a.errorRate);
+	}
+
+	/**
+	 * Records one quota-exhaustion sample: sums `usage_hourly` for this key
+	 * from `entry.periodStart` to now and inserts it as a `quota_observations`
+	 * row. Called whenever a key is newly flagged exhausted (passive 3-strike
+	 * detection or the admin health-check), never on every request.
+	 */
+	async recordQuotaObservation(entry: QuotaObservationEntry): Promise<void> {
+		const periodStartHour = formatPeriodLabel(Date.parse(entry.periodStart), "hour");
+
+		const cursor = this.sql.exec(
+			`SELECT
+				COALESCE(SUM(prompt_tokens), 0) as promptTokens,
+				COALESCE(SUM(completion_tokens), 0) as completionTokens,
+				COALESCE(SUM(request_count), 0) as requestCount
+			 FROM usage_hourly
+			 WHERE provider = ? AND key_hint = ? AND period_hour >= ?`,
+			entry.provider,
+			entry.keyHint,
+			periodStartHour,
+		);
+		const row = cursor.toArray()[0] as
+			| { promptTokens: number; completionTokens: number; requestCount: number }
+			| undefined;
+
+		this.sql.exec(
+			`INSERT INTO quota_observations (
+				provider, key_owner, key_hint, observed_at, period_start,
+				prompt_tokens, completion_tokens, request_count
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			entry.provider,
+			entry.keyOwner,
+			entry.keyHint,
+			Date.now(),
+			entry.periodStart,
+			row?.promptTokens ?? 0,
+			row?.completionTokens ?? 0,
+			row?.requestCount ?? 0,
+		);
+	}
+
+	/**
+	 * Reads back recorded quota-exhaustion observations, most recent first.
+	 */
+	async getQuotaObservations(provider?: string): Promise<QuotaObservationStat[]> {
+		const cursor = provider
+			? this.sql.exec(
+					`SELECT * FROM quota_observations WHERE provider = ? ORDER BY observed_at DESC`,
+					provider,
+				)
+			: this.sql.exec(`SELECT * FROM quota_observations ORDER BY observed_at DESC`);
+
+		const result: QuotaObservationStat[] = [];
+		for (const row of cursor) {
+			result.push({
+				provider: row.provider,
+				keyOwner: row.key_owner,
+				keyHint: row.key_hint,
+				observedAt: new Date(row.observed_at).toISOString(),
+				periodStart: row.period_start,
+				promptTokens: row.prompt_tokens,
+				completionTokens: row.completion_tokens,
+				requestCount: row.request_count,
+			});
+		}
+		return result;
 	}
 
 	/**
@@ -890,6 +999,50 @@ export async function getErrorStats(
 		return await stub.getErrorStats(period);
 	} catch (e) {
 		console.error("[usage-db] Failed to get error stats:", e);
+		return [];
+	}
+}
+
+/**
+ * Records a quota-exhaustion observation (usage-until-exhaustion sample).
+ * Uses Durable Object SQLite storage. Best-effort: a failure here must not
+ * break the request/health-check that triggered it.
+ *
+ * @param usageDo - Durable Object namespace
+ * @param userId - User identifier (Bearer token)
+ * @param entry - Provider/key/periodStart describing the observation window
+ */
+export async function recordQuotaObservation(
+	usageDo: DurableObjectNamespace,
+	userId: string,
+	entry: QuotaObservationEntry,
+): Promise<void> {
+	try {
+		const stub = await getUsageStub(usageDo, userId);
+		await stub.recordQuotaObservation(entry);
+	} catch (e) {
+		console.error("[usage-db] Failed to record quota observation:", e);
+	}
+}
+
+/**
+ * Reads back recorded quota-exhaustion observations, most recent first.
+ * Uses Durable Object SQLite storage.
+ *
+ * @param usageDo - Durable Object namespace
+ * @param userId - User identifier (Bearer token)
+ * @param provider - Optional provider filter (e.g. "mistral")
+ */
+export async function getQuotaObservations(
+	usageDo: DurableObjectNamespace,
+	userId: string,
+	provider?: string,
+): Promise<QuotaObservationStat[]> {
+	try {
+		const stub = await getUsageStub(usageDo, userId);
+		return await stub.getQuotaObservations(provider);
+	} catch (e) {
+		console.error("[usage-db] Failed to get quota observations:", e);
 		return [];
 	}
 }

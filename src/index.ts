@@ -43,7 +43,9 @@ import {
 	loadAiConfig,
 	loadGroupConfig,
 	saveGroupConfig,
+	persistVaultForAccess,
 } from "./lib/vaults";
+import { computeNextMistralReset, currentQuotaPeriodStart, isQuotaExhausted } from "./lib/quota";
 import groupsRouter from "./routes/groups";
 import universalRouter from "./routes/universal";
 import {
@@ -55,6 +57,8 @@ import {
 	getFileSizeBytes,
 	migrateUsageNdjson,
 	migrateErrorNdjson,
+	recordQuotaObservation,
+	getQuotaObservations,
 	type KeyUsageEntry,
 	type KeyErrorEntry,
 	type UsagePeriod,
@@ -1246,6 +1250,123 @@ app.all("/v1/keypool/corsproxy", async (c) => {
 			{ status: 500 },
 		);
 	}
+});
+
+/**
+ * POST /v1/keypool/mistral/healthcheck
+ *
+ * Admin-only. Tests every non-expired, not-already-quota-flagged key on the
+ * caller's "mistral" vault provider with a free `GET /v1/models` call (no
+ * completion cost). Any key that comes back `401` is flagged
+ * `quotaExhaustedAt`/`quotaResetAt` (reset = 1st of next UTC month) so it's
+ * excluded from rotation and never handed to a real client request. Lets an
+ * admin catch exhausted keys proactively instead of waiting for the 3-strike
+ * passive detection in the universal proxy.
+ */
+app.post("/v1/keypool/mistral/healthcheck", async (c) => {
+	const authHeader = c.req.header("Authorization");
+	const token = extractBearerToken(authHeader || null);
+	if (!token) {
+		return c.json({ error: "Missing Authorization header" }, { status: 401 });
+	}
+
+	const ctx = await getUserContext(c.env.KV_AI_PROXY, token, c.env.AI_JSON_CRYPTOKEN);
+	if (!ctx) {
+		return c.json({ error: "Invalid token" }, { status: 403 });
+	}
+	if (!isAdminRole(ctx.role)) {
+		return c.json({ error: "Admin role required" }, { status: 403 });
+	}
+
+	let config: AiConfig;
+	try {
+		config = await loadConfigForContext(c.env, ctx, token);
+	} catch (err) {
+		return c.json(
+			{ error: "Failed to load vault", message: err instanceof Error ? err.message : String(err) },
+			{ status: 500 },
+		);
+	}
+
+	const provider = config.providers["mistral"];
+	if (!provider) {
+		return c.json({ error: "No 'mistral' provider configured in this vault" }, { status: 404 });
+	}
+
+	const tested: string[] = [];
+	const nowExhausted: string[] = [];
+	const healthy: string[] = [];
+	const now = new Date().toISOString();
+	const observations: { keyOwner: string; keyHint: string; periodStart: string }[] = [];
+
+	for (const key of provider.keys) {
+		if (key.type === "expired" || isQuotaExhausted(key)) continue;
+		const hint = `***${key.key.slice(-8)}`;
+		tested.push(hint);
+
+		try {
+			const res = await fetch(`${provider.endpoint}/models`, {
+				headers: { Authorization: `Bearer ${key.key}` },
+				signal: AbortSignal.timeout(10_000),
+			});
+			if (res.status === 401) {
+				observations.push({
+					keyOwner: key.owner ?? "unknown",
+					keyHint: hint,
+					periodStart: currentQuotaPeriodStart(key.quotaResetAt),
+				});
+				key.quotaExhaustedAt = now;
+				key.quotaResetAt = computeNextMistralReset();
+				nowExhausted.push(hint);
+			} else {
+				healthy.push(hint);
+			}
+		} catch (err) {
+			console.error(`Mistral healthcheck failed for key ${hint}:`, err);
+		}
+	}
+
+	if (nowExhausted.length > 0) {
+		try {
+			await persistVaultForAccess(c.env, ctx, token, config);
+		} catch (err) {
+			return c.json(
+				{ error: "Tested keys but failed to persist vault", message: err instanceof Error ? err.message : String(err) },
+				{ status: 500 },
+			);
+		}
+		const statsUserId = ctx.groupId ? `group:${ctx.groupId}` : token;
+		for (const obs of observations) {
+			await recordQuotaObservation(c.env.USAGE_DO, statsUserId, {
+				provider: "mistral",
+				keyOwner: obs.keyOwner,
+				keyHint: obs.keyHint,
+				periodStart: obs.periodStart,
+			});
+		}
+	}
+
+	return c.json({ tested: tested.length, nowExhausted, healthy });
+});
+
+/**
+ * GET /v1/keypool/quota-observations
+ *
+ * Returns recorded quota-exhaustion observations (usage-until-exhaustion
+ * samples) for the caller's stats bucket, optionally filtered by provider.
+ * Descriptive only — used to visualize how a key's real quota trends across
+ * months, not yet consulted by key selection.
+ */
+app.get("/v1/keypool/quota-observations", async (c) => {
+	const env = c.env;
+	const identity = await resolveKeypoolIdentity(c, env);
+	if ("error" in identity) {
+		return c.json({ error: identity.error }, { status: identity.status });
+	}
+
+	const provider = c.req.query("provider") ?? undefined;
+	const data = await getQuotaObservations(env.USAGE_DO, identity.userId, provider);
+	return c.json({ object: "list", data });
 });
 
 // ── Group management ──────────────────────────────────────────────────

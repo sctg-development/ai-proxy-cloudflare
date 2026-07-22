@@ -52,6 +52,18 @@ export interface GroupMember {
   keyHint: string | null;
 }
 
+/** One recorded quota-exhaustion observation, as returned by GET /v1/keypool/quota-observations. */
+export interface QuotaObservation {
+  provider: string;
+  keyOwner: string;
+  keyHint: string;
+  observedAt: string;
+  periodStart: string;
+  promptTokens: number;
+  completionTokens: number;
+  requestCount: number;
+}
+
 /**
  * Interface for API response errors.
  */
@@ -198,6 +210,26 @@ export const ApiService = {
       throw new Error(body.message || body.error || `Request failed with status ${response.status}`);
     }
     return body;
+  },
+
+  /**
+   * Admin-only: test every non-expired, non-quota-flagged "mistral" key with
+   * a free `GET /v1/models` call and flag any that return 401 as quota-
+   * exhausted until the next reset. Persists directly server-side — the
+   * caller should reload the config afterward to see the updated flags.
+   */
+  async testMistralKeys(): Promise<{ tested: number; nowExhausted: string[]; healthy: string[] }> {
+    return this.request('/v1/keypool/mistral/healthcheck', { method: 'POST' });
+  },
+
+  /**
+   * Recorded quota-exhaustion observations (usage-until-exhaustion samples),
+   * most recent first. Optionally filtered by provider (e.g. "mistral").
+   */
+  async getQuotaObservations(provider?: string): Promise<QuotaObservation[]> {
+    const query = provider ? `?provider=${encodeURIComponent(provider)}` : '';
+    const body = await this.request<{ data: QuotaObservation[] }>(`/v1/keypool/quota-observations${query}`);
+    return body.data;
   },
 
   // ── Group administration ─────────────────────────────────────────

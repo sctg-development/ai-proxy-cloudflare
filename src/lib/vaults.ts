@@ -26,6 +26,7 @@ import {
   LEGACY_VAULT_KV_KEY,
 } from './groups';
 import type { AiConfig, GroupRecord } from '../types/ai-config';
+import type { UserContext } from './auth';
 
 /**
  * In-memory cache of decrypted AI configurations.
@@ -109,4 +110,39 @@ export async function saveGroupConfig(
   if (group.legacy) {
     invalidateVaultCache('legacy');
   }
+}
+
+/**
+ * Encrypt and persist an already-decrypted config for whichever vault flavor
+ * `ctx` resolves to (group / legacy / per-user), then invalidate the right
+ * cache entry. This is the write-side counterpart of `resolveVaultAccess` in
+ * `routes/universal.ts` and mirrors the branching in the `PUT /ai.json.enc`
+ * handler, so server-side code that has already decrypted+patched a config
+ * in memory (e.g. auto-detected quota exhaustion, the admin health-check)
+ * doesn't need to re-derive the per-flavor password/KV-key logic.
+ *
+ * @param token - Caller's bearer token; used as the encryption password for
+ *   per-user vaults (matches how those vaults are encrypted on write today).
+ */
+export async function persistVaultForAccess(
+  env: Env,
+  ctx: UserContext,
+  token: string,
+  config: AiConfig,
+): Promise<void> {
+  if (ctx.groupId && ctx.group) {
+    await saveGroupConfig(env, ctx.groupId, ctx.group, config);
+    return;
+  }
+
+  if (ctx.isLegacy) {
+    const encrypted = await encryptVault(JSON.stringify(config), env.AI_JSON_CRYPTOKEN);
+    await env.KV_AI_PROXY.put(LEGACY_VAULT_KV_KEY, encrypted);
+    invalidateVaultCache('legacy');
+    return;
+  }
+
+  const encrypted = await encryptVault(JSON.stringify(config), token);
+  await env.KV_AI_PROXY.put(`vault:${ctx.vaultId}`, encrypted);
+  invalidateVaultCache(ctx.vaultId);
 }

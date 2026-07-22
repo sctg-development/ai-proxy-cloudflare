@@ -59,6 +59,10 @@ export interface AiKey {
   sharedSecret?: string;
   /** Optional hash type for the signature */
   signatureType?: 'hmac-md5' | 'hmac-sha256' | 'hmac-sha512';
+  /** ISO 8601 timestamp: key becomes usable again at/after this instant. Unset = not known to be quota-exhausted. */
+  quotaResetAt?: string;
+  /** ISO 8601 timestamp: when we learned this key was quota-exhausted (audit only). */
+  quotaExhaustedAt?: string;
 }
 
 /**

@@ -60,6 +60,8 @@ interface ProviderCardProps {
   onRefreshFreeModels?: () => void;
   /** Called when the user asks to reload only latest models (Mistral only). */
   onRefreshLatestModels?: () => void;
+  /** Called when the user asks to test all keys for quota exhaustion (Mistral only). */
+  onTestQuotaKeys?: () => void;
   /** Whether this provider has a known upstream model-list API implementation. */
   canRefreshModels: boolean;
   /** Whether the upstream model-list request is in flight. */
@@ -106,6 +108,7 @@ export const ProviderCard: React.FC<ProviderCardProps> = ({
   onRefreshModels,
   onRefreshFreeModels,
   onRefreshLatestModels,
+  onTestQuotaKeys,
   canRefreshModels,
   isRefreshingModels,
   modelSyncMessage,
@@ -262,6 +265,18 @@ export const ProviderCard: React.FC<ProviderCardProps> = ({
                   Refresh latest from API
                 </Button>
               )}
+              {id === 'mistral' && onTestQuotaKeys && (
+                <Button
+                  size="sm"
+                  variant="tertiary"
+                  onPress={onTestQuotaKeys}
+                  isPending={isRefreshingModels}
+                  isDisabled={provider.keys.every((apiKey) => apiKey.type === 'expired')}
+                >
+                  <Key className="mr-2 h-3.5 w-3.5" />
+                  Test keys (quota)
+                </Button>
+              )}
               <Button size="sm" variant="tertiary" onPress={onAddModel}>
                 <Plus className="mr-2 h-3.5 w-3.5" />
                 Add Model
@@ -298,6 +313,7 @@ export const ProviderCard: React.FC<ProviderCardProps> = ({
                     <Table.Column isRowHeader>Key (Masked)</Table.Column>
                     <Table.Column>Owner</Table.Column>
                     <Table.Column>Type</Table.Column>
+                    <Table.Column>Quota</Table.Column>
                     <Table.Column className="text-end">Actions</Table.Column>
                   </Table.Header>
                   <Table.Body>
@@ -353,6 +369,13 @@ export const ProviderCard: React.FC<ProviderCardProps> = ({
                           {apiKey.type && (
                             <Chip size="sm" variant="soft">
                               {apiKey.type}
+                            </Chip>
+                          )}
+                        </Table.Cell>
+                        <Table.Cell>
+                          {apiKey.quotaResetAt && new Date(apiKey.quotaResetAt).getTime() > Date.now() && (
+                            <Chip size="sm" variant="soft" color="danger">
+                              exhausted until {new Date(apiKey.quotaResetAt).toISOString().slice(0, 10)}
                             </Chip>
                           )}
                         </Table.Cell>

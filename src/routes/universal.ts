@@ -28,8 +28,10 @@ import { createGateway } from "@sctg/cline-llms/worker";
 
 import { extractBearerToken, getUserContext, type UserContext } from '../lib/auth';
 import { getGroupVaultPassword, groupVaultKvKey, LEGACY_VAULT_KV_KEY } from '../lib/groups';
-import { recordError, recordUsage } from '../lib/usage-db';
+import { recordError, recordQuotaObservation, recordUsage } from '../lib/usage-db';
 import { decryptAiConfig } from '../lib/ai-enc';
+import { persistVaultForAccess } from '../lib/vaults';
+import { computeNextMistralReset, currentQuotaPeriodStart } from '../lib/quota';
 import {
 	collectOpenAiCompletion,
 	openAiSseStream,
@@ -101,6 +103,43 @@ async function resolveVaultAccess(
 function extractErrorCode(message: string): number | null {
 	const match = message.match(/\b(4\d\d|5\d\d)\b/);
 	return match ? Number(match[1]) : null;
+}
+
+/**
+ * Persists a suspected quota exhaustion (see `quota-exhausted-suspected` in
+ * the SDK) by patching the caller's vault: loads the current config, flags
+ * the matching key with `quotaResetAt`/`quotaExhaustedAt`, and writes it back
+ * through `persistVaultForAccess`. Best-effort — a failure here must not
+ * break the in-flight request, since the SDK's own in-memory cooldown
+ * already keeps the key out of rotation for this isolate regardless.
+ */
+async function flagKeyQuotaExhausted(
+	env: Env,
+	ctx: UserContext,
+	token: string,
+	access: VaultAccess,
+	providerName: string,
+	keyHint: string,
+): Promise<void> {
+	const config = await decryptAiConfig(access.encryptedVault, access.vaultPassword);
+	const provider = config.providers[providerName];
+	if (!provider) return;
+
+	const suffix = keyHint.replace(/^\*+/, '');
+	const key = provider.keys.find((k) => k.key.slice(-8) === suffix);
+	if (!key) return;
+
+	const periodStart = currentQuotaPeriodStart(key.quotaResetAt);
+	key.quotaExhaustedAt = new Date().toISOString();
+	key.quotaResetAt = computeNextMistralReset();
+	await persistVaultForAccess(env, ctx, token, config);
+
+	await recordQuotaObservation(env.USAGE_DO, access.statsUserId, {
+		provider: providerName,
+		keyOwner: key.owner ?? 'unknown',
+		keyHint,
+		periodStart,
+	});
 }
 
 universal.use('*', async (c, next) => {
@@ -221,6 +260,13 @@ universal.post('/chat/completions', async (c) => {
 						keyHint: event.failedKeyHint,
 						errorCode: extractErrorCode(event.error ?? ''),
 					}).catch((err) => console.error('universal error recording failed:', err)),
+				);
+				break;
+			case 'quota-exhausted-suspected':
+				c.executionCtx.waitUntil(
+					flagKeyQuotaExhausted(env, ctx, token, access, event.providerName, event.keyHint).catch((err) =>
+						console.error('universal quota-exhausted-suspected persistence failed:', err),
+					),
 				);
 				break;
 		}

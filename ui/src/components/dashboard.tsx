@@ -555,6 +555,35 @@ export const Dashboard: React.FC = () => {
   };
 
   /**
+   * Admin-only: tests every eligible "mistral" key with a free `/v1/models`
+   * call and flags exhausted ones server-side (see `quotaResetAt`). Reloads
+   * the vault afterward so the Keys table reflects the persisted flags.
+   */
+  const testMistralQuotaKeys = async (id: string) => {
+    setSyncingProviderId(id);
+    setModelSyncMessages((messages) => ({
+      ...messages,
+      [id]: 'Testing keys for quota exhaustion…',
+    }));
+
+    try {
+      const result = await ApiService.testMistralKeys();
+      setModelSyncMessages((messages) => ({
+        ...messages,
+        [id]: `Tested ${result.tested} key(s): ${result.nowExhausted.length} newly flagged exhausted, ${result.healthy.length} healthy.`,
+      }));
+      await refresh();
+    } catch (err) {
+      setModelSyncMessages((messages) => ({
+        ...messages,
+        [id]: err instanceof Error ? err.message : 'Unable to test keys for quota exhaustion.',
+      }));
+    } finally {
+      setSyncingProviderId(null);
+    }
+  };
+
+  /**
    * Saves a reordered model array and regenerates priorities from the visible
    * order. Priority `0` is the first model in the list.
    */
@@ -930,6 +959,7 @@ export const Dashboard: React.FC = () => {
                     onRefreshModels={() => refreshProviderModels(id)}
                     onRefreshFreeModels={() => refreshProviderFreeModels(id)}
                     onRefreshLatestModels={() => refreshProviderLatestModels(id)}
+                    onTestQuotaKeys={id === 'mistral' ? () => testMistralQuotaKeys(id) : undefined}
                     canRefreshModels={canDiscoverProviderModels(id, provider)}
                     isRefreshingModels={syncingProviderId === id}
                     modelSyncMessage={modelSyncMessages[id]}

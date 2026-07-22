@@ -19,7 +19,8 @@
 // AI configuration decryption utility
 // Decrypts ai.json.enc using Web Crypto API (Node.js ≥18 & Cloudflare Workers)
 
-import type { AiConfig, AiKey, AiModel, AiProvider } from '../types/ai-config'; 
+import type { AiConfig, AiKey, AiModel, AiProvider } from '../types/ai-config';
+import { isQuotaExhausted } from './quota';
 
 /**
  * Decrypt ai.json.enc encrypted with:
@@ -102,12 +103,14 @@ export function resolveModelId(
 
 /**
  * Pick one API key at random (load-balancing).
+ * Excludes expired and known quota-exhausted keys (see `quotaResetAt`).
  */
 export function pickKey(provider: AiProvider): AiKey {
-  if (provider.keys.length === 0) {
+  const eligible = provider.keys.filter((k) => k.type !== 'expired' && !isQuotaExhausted(k));
+  if (eligible.length === 0) {
     throw new Error('No API keys configured for provider');
   }
-  return provider.keys[Math.floor(Math.random() * provider.keys.length)];
+  return eligible[Math.floor(Math.random() * eligible.length)];
 }
 
 /**
