@@ -1,6 +1,6 @@
 {
   "name": "ai-proxy-cloudflare",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "AI Proxy Cloudflare Worker — routes requests through Cloudflare AI Gateway with ai.json.enc decryption",
   "type": "module",
   "author": "Ronan LE MEILLAT",
@@ -14,18 +14,18 @@
     "typegen": "wrangler types"
   },
   "dependencies": {
-    "@sctg/cline-llms": "^4.0.0-beta.20260716182209",
-    "@sctg/cline-sdk": "^4.0.0-beta.20260716182209",
-    "@sctg/cline-shared": "^4.0.0-beta.20260716182209",
-    "hono": "^4.12.30"
+    "@sctg/cline-llms": "^4.0.0-beta.20260730190220",
+    "@sctg/cline-sdk": "^4.0.0-beta.20260730190220",
+    "@sctg/cline-shared": "^4.0.0-beta.20260730190220",
+    "hono": "^4.12.33"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.18.5",
-    "@cloudflare/workers-types": "^5.20260716.1",
+    "@cloudflare/vitest-pool-workers": "^0.20.1",
+    "@cloudflare/workers-types": "^5.20260801.1",
     "@types/node": "^25.9.1",
     "fast-glob": "^3.3.3",
     "typescript": "^7.0.2",
     "vitest": "4.1.10",
-    "wrangler": "^4.111.0"
+    "wrangler": "^4.118.0"
   }
 }
