@@ -1262,6 +1262,7 @@ app.all("/v1/keypool/corsproxy", async (c) => {
  * excluded from rotation and never handed to a real client request. Lets an
  * admin catch exhausted keys proactively instead of waiting for the 3-strike
  * passive detection in the universal proxy.
+ * An optional parameter `?force=true` can be used to test all keys, even those already flagged	
  */
 app.post("/v1/keypool/mistral/healthcheck", async (c) => {
 	const authHeader = c.req.header("Authorization");
@@ -1269,6 +1270,8 @@ app.post("/v1/keypool/mistral/healthcheck", async (c) => {
 	if (!token) {
 		return c.json({ error: "Missing Authorization header" }, { status: 401 });
 	}
+
+	const force = c.req.query("force") === "true";
 
 	const ctx = await getUserContext(c.env.KV_AI_PROXY, token, c.env.AI_JSON_CRYPTOKEN);
 	if (!ctx) {
@@ -1300,7 +1303,7 @@ app.post("/v1/keypool/mistral/healthcheck", async (c) => {
 	const observations: { keyOwner: string; keyHint: string; periodStart: string }[] = [];
 
 	for (const key of provider.keys) {
-		if (key.type === "expired" || isQuotaExhausted(key)) continue;
+		if ((key.type === "expired" || isQuotaExhausted(key)) && !force) continue; // Skip expired or already-exhausted keys unless forced
 		const hint = `***${key.key.slice(-8)}`;
 		tested.push(hint);
 
