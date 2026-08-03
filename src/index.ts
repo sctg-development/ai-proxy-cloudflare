@@ -1176,11 +1176,16 @@ app.post("/v1/keypool/byok/models", async (c) => {
  * Requires Bearer token authentication matching AI_JSON_CRYPTOKEN.
  */
 app.all("/v1/keypool/corsproxy", async (c) => {
-	const authHeader = c.req.header("ProxyAuthorization") ? c.req.header("ProxyAuthorization") : c.req.header("Authorization");
-	if (!isCryptoTokenValid(authHeader || null, c.env.AI_JSON_CRYPTOKEN)) {
+	const authHeader = c.req.header("Proxy-Authorization") ? c.req.header("Proxy-Authorization") : c.req.header("Authorization");
+	const token = extractBearerToken(authHeader || null);
+	if (!token) {
 		return c.json({ error: "Unauthorized" }, { status: 403 });
 	}
-
+	const username = await validateUserKey(c.env.KV_AI_PROXY, token);
+	if (!username) {
+		return c.json({ error: "Invalid API key" }, { status: 403 });
+	}
+	
 	// Extract the target URL from query parameters
 	const targetUrl = c.req.query("url");
 	if (!targetUrl) {
@@ -1201,7 +1206,7 @@ app.all("/v1/keypool/corsproxy", async (c) => {
 			} as Record<string, string>,
 		};
 
-		if (c.req.header("Authorization") && c.req.header("ProxyAuthorization")) {
+		if (c.req.header("Authorization") && c.req.header("Proxy-Authorization")) {
 			(init.headers as Record<string, string>)["Authorization"] = c.req.header("Authorization")!;
 		}
 
