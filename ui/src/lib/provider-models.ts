@@ -31,6 +31,7 @@
  */
 
 import type { AiModel, AiModalityInput, AiModalityOutput, AiProvider } from '../types/ai-config';
+import {ApiService} from './api';
 
 /** Providers whose public APIs are explicitly handled by this file. */
 export type SupportedDiscoveryProvider =
@@ -39,6 +40,7 @@ export type SupportedDiscoveryProvider =
   | 'anthropic'
   | 'gemini'
   | 'mistral'
+  | 'poolside'
   | 'openrouter'
   | 'openai'
   | 'morph'
@@ -78,6 +80,8 @@ export async function discoverProviderModels(
       return withStablePriority(await fetchOpenRouterModels(provider, apiKey, freeOnly), previousModels);
     case 'openai':
       return withStablePriority(await fetchOpenAiModels(provider, apiKey), previousModels);
+    case 'poolside':
+      return withStablePriority(await fetchPoolsideModels(provider, apiKey, ApiService.getToken()  ), previousModels);
     case 'morph':
       return withStablePriority(await fetchMorphModels(provider, apiKey), previousModels);
     case 'cohere':
@@ -135,12 +139,13 @@ function canonicalProviderId(
   if (haystack.includes('groq')) return 'groq';
   if (haystack.includes('morphllm') || /\bmorph\b/.test(haystack)) return 'morph';
   if (haystack.includes('cohere')) return 'cohere';
+  if (haystack.includes('poolside')) return 'poolside'; // Poolside is OpenAI-compatible  
   return 'openai';
 }
 
 function isSupportedDiscoveryProvider(providerId: string): providerId is SupportedDiscoveryProvider {
   return [
-    'groq', 'sambanova', 'anthropic', 'gemini', 'mistral', 'openrouter', 'openai', 'morph', 'cohere',
+    'groq', 'sambanova', 'anthropic', 'gemini', 'mistral', 'openrouter', 'openai', 'morph', 'cohere', 'poolside'
   ].includes(providerId);
 }
 
@@ -185,6 +190,7 @@ function dedupeModels(models: AiModel[]): AiModel[] {
 }
 
 async function fetchJson(url: URL, init: RequestInit, providerName: string): Promise<unknown> {
+  console.log(`fetchJson called for provider ${providerName} with url: ${url} and headers: ${JSON.stringify(init.headers)}`);
   const response = await fetch(url, init);
   if (!response.ok) {
     const errorText = await response.text().catch(() => '');
@@ -323,8 +329,8 @@ async function fetchMistralModels(
         usage === 'embedding'
           ? 0
           : numberField(item, 'max_output_tokens') ??
-            numberField(item, 'max_completion_tokens') ??
-            contextWindow;
+          numberField(item, 'max_completion_tokens') ??
+          contextWindow;
       return model(id, usage, contextWindow, maxOutputTokens, null, inputModalities, outputModalities);
     })
     .filter((m) => m.contextWindow > 0 || m.usage === 'embedding');
@@ -361,8 +367,8 @@ async function fetchOpenRouterModels(
         usage === 'embedding'
           ? 0
           : numberField(topProvider, 'max_completion_tokens') ??
-            numberField(item, 'max_completion_tokens') ??
-            contextWindow;
+          numberField(item, 'max_completion_tokens') ??
+          contextWindow;
 
       // Extract additional capabilities from the API response
       const pricing = recordField(item, 'pricing');
@@ -411,6 +417,36 @@ async function fetchOpenAiModels(
   return {
     models,
     notes: ['OpenAI /v1/models does not return limits; recognized chat/embedding models are enriched from documented limits.'],
+  };
+}
+
+
+// Poolside AI need to be proxied via corsproxy
+async function fetchPoolsideModels(
+  provider: AiProvider,
+  apiKey: string,
+  userApiKey: string | null,
+): Promise<ProviderModelDiscoveryResult> {
+  const url = new URL(`${import.meta.env.VAULT_URL}/v1/keypool/corsproxy?url=https://inference.poolside.ai/v1/models`);
+  console.log(`fetchPoolsideModels called with userApiKey: ${userApiKey} url= ${url}`);
+  const payload = await fetchJson(
+    url,
+    {
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Proxy-Authorization": `Bearer ${userApiKey}`
+      }
+    },
+
+    'poolside',
+  );
+  const models = arrayFromData(payload)
+    .map((item) => openAiModelFromId(stringField(item, 'id')))
+    .filter((m): m is AiModel => m !== null);
+
+  return {
+    models,
+    notes: ['Poolside /v1/models does not return limits; recognized chat/embedding models are enriched from documented limits.'],
   };
 }
 
@@ -686,8 +722,8 @@ function normalizeFromOpenAiCompatible(
     usage === 'embedding'
       ? 0
       : numberField(item, 'max_completion_tokens') ??
-        numberField(item, 'max_output_tokens') ??
-        contextWindow;
+      numberField(item, 'max_output_tokens') ??
+      contextWindow;
   return model(id, usage, contextWindow, maxOutputTokens, null, inputModalities, outputModalities);
 }
 
