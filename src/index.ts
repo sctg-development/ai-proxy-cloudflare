@@ -1176,8 +1176,8 @@ app.post("/v1/keypool/byok/models", async (c) => {
  * Requires Bearer token authentication matching AI_JSON_CRYPTOKEN.
  */
 app.all("/v1/keypool/corsproxy", async (c) => {
-	const authHeader = c.req.header("Proxy-Authorization") ? c.req.header("Proxy-Authorization") : c.req.header("Authorization");
-	console.log("Proxy request received with method:", c.req.method, "and URL:", c.req.url, " authenticated using header:", c.req.header("Proxy-Authorization") ? "Proxy-Authorization" : c.req.header("Authorization") ? "Authorization" : "None");
+	const authHeader = c.req.header("X-Proxy-Authorization") ? c.req.header("X-Proxy-Authorization") : c.req.header("X-Proxy-Authorization") ? c.req.header("X-Proxy-Authorization") : c.req.header("Authorization");
+	console.log("Proxy request received with method:", c.req.method, "and URL:", c.req.url, " authenticated using header:", c.req.header("X-Proxy-Authorization") ? "X-Proxy-Authorization" : c.req.header("Authorization") ? "Authorization" : "None");
 	const token = extractBearerToken(authHeader || null);
 	if (!token) {
 		return c.json({ error: "Unauthorized" }, { status: 403 });
