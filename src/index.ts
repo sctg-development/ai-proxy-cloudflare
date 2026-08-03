@@ -1177,6 +1177,7 @@ app.post("/v1/keypool/byok/models", async (c) => {
  */
 app.all("/v1/keypool/corsproxy", async (c) => {
 	const authHeader = c.req.header("Proxy-Authorization") ? c.req.header("Proxy-Authorization") : c.req.header("Authorization");
+	console.log("Proxy request received with method:", c.req.method, "and URL:", c.req.url, " authenticated using header:", c.req.header("Proxy-Authorization") ? "Proxy-Authorization" : c.req.header("Authorization") ? "Authorization" : "None");
 	const token = extractBearerToken(authHeader || null);
 	if (!token) {
 		return c.json({ error: "Unauthorized" }, { status: 403 });
@@ -1185,6 +1186,7 @@ app.all("/v1/keypool/corsproxy", async (c) => {
 	if (!username) {
 		return c.json({ error: "Invalid API key" }, { status: 403 });
 	}
+	console.log("CORS proxy authorized for user:", username);
 
 	// Extract the target URL from query parameters
 	const targetUrl = c.req.query("url");
