@@ -1185,7 +1185,7 @@ app.all("/v1/keypool/corsproxy", async (c) => {
 	if (!username) {
 		return c.json({ error: "Invalid API key" }, { status: 403 });
 	}
-	
+
 	// Extract the target URL from query parameters
 	const targetUrl = c.req.query("url");
 	if (!targetUrl) {
@@ -1240,7 +1240,7 @@ app.all("/v1/keypool/corsproxy", async (c) => {
 		// Add CORS headers to allow cross-origin requests
 		responseHeaders.set("Access-Control-Allow-Origin", "*");
 		responseHeaders.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS");
-		responseHeaders.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
+		responseHeaders.set("Access-Control-Allow-Headers", "Content-Type, Authorization, Proxy-Authorization");
 
 		// Stream the response body
 		return new Response(response.body, {
