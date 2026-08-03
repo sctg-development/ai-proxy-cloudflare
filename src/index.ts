@@ -1176,7 +1176,7 @@ app.post("/v1/keypool/byok/models", async (c) => {
  * Requires Bearer token authentication matching AI_JSON_CRYPTOKEN.
  */
 app.all("/v1/keypool/corsproxy", async (c) => {
-	const authHeader = c.req.header("Authorization");
+	const authHeader = c.req.header("ProxyAuthorization") ? c.req.header("ProxyAuthorization") : c.req.header("Authorization");
 	if (!isCryptoTokenValid(authHeader || null, c.env.AI_JSON_CRYPTOKEN)) {
 		return c.json({ error: "Unauthorized" }, { status: 403 });
 	}
@@ -1200,6 +1200,10 @@ app.all("/v1/keypool/corsproxy", async (c) => {
 				"Accept": c.req.header("Accept") || "*/*",
 			} as Record<string, string>,
 		};
+
+		if (c.req.header("Authorization") && c.req.header("ProxyAuthorization")) {
+			(init.headers as Record<string, string>)["Authorization"] = c.req.header("Authorization")!;
+		}
 
 		// Forward request body if present (for POST, PUT, PATCH, etc.)
 		if (c.req.method !== "GET" && c.req.method !== "HEAD") {
