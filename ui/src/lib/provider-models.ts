@@ -190,7 +190,6 @@ function dedupeModels(models: AiModel[]): AiModel[] {
 }
 
 async function fetchJson(url: URL, init: RequestInit, providerName: string): Promise<unknown> {
-  console.log(`fetchJson called for provider ${providerName} with url: ${url} and headers: ${JSON.stringify(init.headers)}`);
   const response = await fetch(url, init);
   if (!response.ok) {
     const errorText = await response.text().catch(() => '');
@@ -423,7 +422,7 @@ async function fetchOpenAiModels(
 
 // Poolside AI need to be proxied via corsproxy
 async function fetchPoolsideModels(
-  provider: AiProvider,
+  _provider: AiProvider,
   apiKey: string,
   userApiKey: string | null,
 ): Promise<ProviderModelDiscoveryResult> {
@@ -434,19 +433,50 @@ async function fetchPoolsideModels(
     {
       headers: {
         "Authorization": `Bearer ${apiKey}`,
-        "Proxy-Authorization": `Bearer ${userApiKey}`
+        "X-Proxy-Authorization": `Bearer ${userApiKey}`
       }
     },
 
     'poolside',
   );
-  const models = arrayFromData(payload)
-    .map((item) => openAiModelFromId(stringField(item, 'id')))
-    .filter((m): m is AiModel => m !== null);
+  const records = arrayFromData(payload);
+  const models = records.map((item): AiModel | null => {
+    const id = stringField(item, 'id');
+    if (!id) return null;
+
+    const usage = inferUsageFromId(id);
+    if (!usage) return null;
+
+    const contextWindow = numberField(item, 'context_length') ?? 0;
+    const maxOutputTokens = numberField(item, 'max_completion_tokens') ?? 32768;
+    const inputModalities = stringArrayField(item, 'input_modalities');
+    const outputModalities = stringArrayField(item, 'output_modalities');
+    const supportedFeatures = stringArrayField(item, 'supported_features');
+    const tags = supportedFeatures.length > 0 ? supportedFeatures : undefined;
+
+    if (usage === 'embedding') {
+      return model(id, 'embedding', contextWindow, 0, null, ['text'] as AiModalityInput[], ['text'] as AiModalityOutput[]);
+    }
+
+    return model(
+      id,
+      'chat',
+      contextWindow,
+      maxOutputTokens,
+      null,
+      modalityInputArray(inputModalities.length > 0 ? inputModalities : ['text']),
+      modalityOutputArray(outputModalities.length > 0 ? outputModalities : ['text']),
+      undefined, // supportsImages
+      undefined, // supportsPromptCache
+      supportedFeatures?.includes('tools'),
+      supportedFeatures?.includes('reasoning'),
+      tags
+    );
+  }).filter((m): m is AiModel => m !== null);
 
   return {
     models,
-    notes: ['Poolside /v1/models does not return limits; recognized chat/embedding models are enriched from documented limits.'],
+    notes: [],
   };
 }
 
@@ -739,6 +769,7 @@ function model(
   supportsPromptCache?: boolean,
   supportsTools?: boolean,
   supportsReasoning?: boolean,
+  tags?: string[],
 ): AiModel {
   return {
     id,
@@ -753,6 +784,7 @@ function model(
     ...(supportsPromptCache !== undefined ? { supportsPromptCache } : {}),
     ...(supportsTools !== undefined ? { supportsTools } : {}),
     ...(supportsReasoning !== undefined ? { supportsReasoning } : {}),
+    ...(tags ? { tags } : {}),
   };
 }
 
@@ -796,6 +828,22 @@ function numberField(value: JsonRecord, field: string): number | null {
 function stringArrayField(value: JsonRecord, field: string): string[] {
   const v = value[field];
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+}
+
+/**
+ * Converts an array of strings to typed AiModalityInput array.
+ */
+function modalityInputArray(arr: string[]): AiModalityInput[] {
+  const validInputs: AiModalityInput[] = ['text', 'image', 'audio', 'video'];
+  return arr.filter((s): s is AiModalityInput => validInputs.includes(s as AiModalityInput));
+}
+
+/**
+ * Converts an array of strings to typed AiModalityOutput array.
+ */
+function modalityOutputArray(arr: string[]): AiModalityOutput[] {
+  const validOutputs: AiModalityOutput[] = ['text', 'image', 'audio'];
+  return arr.filter((s): s is AiModalityOutput => validOutputs.includes(s as AiModalityOutput));
 }
 
 /**
