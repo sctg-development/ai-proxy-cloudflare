@@ -1208,7 +1208,7 @@ app.all("/v1/keypool/corsproxy", async (c) => {
 			} as Record<string, string>,
 		};
 
-		if (c.req.header("Authorization") && c.req.header("Proxy-Authorization")) {
+		if (c.req.header("Authorization") && c.req.header("X-Proxy-Authorization")) {
 			(init.headers as Record<string, string>)["Authorization"] = c.req.header("Authorization")!;
 		}
 
