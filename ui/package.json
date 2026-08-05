@@ -22,6 +22,7 @@
     "test": "exit 0"
   },
   "devDependencies": {
+    "@react-aria/ssr": "^3.10.1",
     "@tailwindcss/vite": "^4.3.3",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
@@ -36,7 +37,8 @@
   "dependencies": {
     "@heroui/react": "^3.2.3",
     "@heroui/styles": "^3.2.3",
-    "@sctg/cline-chatbot": "4.0.0-beta.20260803140308",
+    "@react-aria/utils": "^3.34.1",
+    "@sctg/cline-chatbot": "^4.0.0-beta.20260805064650",
     "highlight.js": "^11.11.1",
     "i18next": "^26.3.6",
     "idb": "^8.0.3",
