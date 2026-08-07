@@ -24,6 +24,7 @@ on:
       - master
     paths:
       - src/**
+      - ui/**
       - package-lock.json
       - .github/workflows/deploy-proxy.yaml
       - .github/workflows/create-env-artifact.yaml
@@ -36,7 +37,7 @@ on:
 
 permissions:
   contents: read
-  id-token: write  # Required for OIDC
+  id-token: write # Required for OIDC
 
 jobs:
   create-env:
@@ -58,10 +59,18 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: "24"
-          registry-url: 'https://registry.npmjs.org'
+          registry-url: "https://registry.npmjs.org"
 
       - name: Install dependencies
         run: npm install
+
+      - name: Install UI dependencies
+        run: npm install
+        working-directory: ./ui
+
+      - name: Build UI
+        run: npx vite build --base="/"
+        working-directory: ./ui
 
       - name: Download shared .env artifact
         uses: actions/download-artifact@v5
@@ -89,8 +98,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CRYPTOKEN: ${{ secrets.CRYPTOKEN }}
-        run: 
-          npx wrangler secret bulk < secrets.json
+        run: npx wrangler secret bulk < secrets.json
 
       - name: Deploy Proxy Worker
         uses: cloudflare/wrangler-action@v3
@@ -102,4 +110,3 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: .
-

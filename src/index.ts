@@ -70,7 +70,7 @@ import type { AiConfig, AiKey, AiModel, AiProvider } from "./types/ai-config";
  */
 const AI_JSON_ENC_KV_KEY = "vault:ai.json.enc";
 
-declare global {
+	declare global {
 	interface Env {
 		KV_AI_PROXY: KVNamespace;
 		USAGE_DO: DurableObjectNamespace;
@@ -79,6 +79,7 @@ declare global {
 		AI_JSON_CRYPTOKEN: string;
 		CLOUDFLARE_AIG_TOKEN: string;
 		DEBUG?: string;
+		ASSETS: Fetcher;
 		/** Base URL of the Fufuni merchant backend (e.g. https://api.fufuni.pp.ua). Optional. */
 		FUFUNI_MERCHANT_URL?: string;
 		/** Shared secret for proxy-to-merchant balance API. Optional. */
@@ -403,9 +404,9 @@ app.get("/ai.json", async (c) => {
 });
 
 /**
- * Health check.
+ * Health check endpoint (kept for monitoring / load balancer probes).
  */
-app.get("/", (c) => {
+app.get("/health", (c) => {
 	return c.json({ status: "ok", service: "ai-proxy-cloudflare" });
 });
 
@@ -1577,6 +1578,25 @@ app.all("*", (c) => {
 		},
 		{ status: 404 },
 	);
+});
+
+/**
+ * Serve static UI assets with SPA fallback.
+ *
+ * Catches all GET requests that did not match an API route above and tries to
+ * serve a file from the ASSETS binding (built from ui/dist). When the asset is
+ * not found (e.g. a client-side route like /settings), fall back to
+ * index.html so the SPA router can handle it.
+ */
+app.get("/*", async (c) => {
+	const resp = await c.env.ASSETS.fetch(c.req.raw);
+	if (resp.status === 404) {
+		const url = new URL(c.req.url);
+		url.pathname = "/index.html";
+		const indexResp = await c.env.ASSETS.fetch(new Request(url, c.req));
+		if (indexResp.ok) return indexResp;
+	}
+	return resp;
 });
 
 // ── Migration routine ───────────────────────────────────────────────────
