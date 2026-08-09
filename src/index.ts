@@ -1313,6 +1313,7 @@ app.post("/v1/keypool/mistral/healthcheck", async (c) => {
 	const healthy: string[] = [];
 	const now = new Date().toISOString();
 	const observations: { keyOwner: string; keyHint: string; periodStart: string }[] = [];
+	let changed = false;
 
   for (const key of provider.keys) {
 		if (key.type === "expired" && !force) continue; // Skip expired keys unless forced
@@ -1333,11 +1334,13 @@ app.post("/v1/keypool/mistral/healthcheck", async (c) => {
 				key.quotaExhaustedAt = now;
 				key.quotaResetAt = computeNextMistralReset();
 				nowExhausted.push(hint);
+				changed = true;
 			} else {
 				// Key is healthy - clear any existing exhaustion flags
 				if (key.quotaExhaustedAt || key.quotaResetAt) {
 					key.quotaExhaustedAt = undefined;
 					key.quotaResetAt = undefined;
+					changed = true;
 				}
 				healthy.push(hint);
 			}
@@ -1346,7 +1349,7 @@ app.post("/v1/keypool/mistral/healthcheck", async (c) => {
 		}
 	}
 
-	if (nowExhausted.length > 0) {
+	if (changed) {
 		try {
 			await persistVaultForAccess(c.env, ctx, token, config);
 		} catch (err) {
@@ -1355,6 +1358,8 @@ app.post("/v1/keypool/mistral/healthcheck", async (c) => {
 				{ status: 500 },
 			);
 		}
+	}
+	if (nowExhausted.length > 0) {
 		const statsUserId = ctx.groupId ? `group:${ctx.groupId}` : token;
 		for (const obs of observations) {
 			await recordQuotaObservation(c.env.USAGE_DO, statsUserId, {
