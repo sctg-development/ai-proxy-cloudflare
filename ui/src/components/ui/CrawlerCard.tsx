@@ -215,7 +215,7 @@ export const CrawlerCard: React.FC<CrawlerCardProps> = ({
                       <Table.Column isRowHeader>Key (Masked)</Table.Column>
                       <Table.Column>Owner</Table.Column>
                       <Table.Column>Type</Table.Column>
-                      <Table.Column className="text-end">Actions</Table.Column>
+                      <Table.Column>Actions</Table.Column>
                     </Table.Header>
                     <Table.Body>
                       {crawler.keys.map((apiKey, index) => (
