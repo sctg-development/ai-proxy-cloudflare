@@ -218,9 +218,9 @@ export const ApiService = {
    * exhausted until the next reset. Persists directly server-side — the
    * caller should reload the config afterward to see the updated flags.
    */
-  async testMistralKeys(): Promise<{ tested: number; nowExhausted: string[]; healthy: string[] }> {
-    return this.request('/v1/keypool/mistral/healthcheck', { method: 'POST' });
-  },
+   async testMistralKeys(force: boolean = true): Promise<{ tested: number; nowExhausted: string[]; healthy: string[] }> {
+    return this.request('/v1/keypool/mistral/healthcheck' + (force ? '?force=true' : ''), { method: 'POST' });
+   },
 
   /**
    * Recorded quota-exhaustion observations (usage-until-exhaustion samples),

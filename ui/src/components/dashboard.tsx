@@ -567,7 +567,7 @@ export const Dashboard: React.FC = () => {
     }));
 
     try {
-      const result = await ApiService.testMistralKeys();
+       const result = await ApiService.testMistralKeys(true);
       setModelSyncMessages((messages) => ({
         ...messages,
         [id]: `Tested ${result.tested} key(s): ${result.nowExhausted.length} newly flagged exhausted, ${result.healthy.length} healthy.`,
