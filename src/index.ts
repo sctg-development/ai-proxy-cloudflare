@@ -1334,6 +1334,11 @@ app.post("/v1/keypool/mistral/healthcheck", async (c) => {
 				key.quotaResetAt = computeNextMistralReset();
 				nowExhausted.push(hint);
 			} else {
+				// Key is healthy - clear any existing exhaustion flags
+				if (key.quotaExhaustedAt || key.quotaResetAt) {
+					key.quotaExhaustedAt = undefined;
+					key.quotaResetAt = undefined;
+				}
 				healthy.push(hint);
 			}
 		} catch (err) {
