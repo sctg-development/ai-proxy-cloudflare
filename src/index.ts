@@ -1314,8 +1314,8 @@ app.post("/v1/keypool/mistral/healthcheck", async (c) => {
 	const now = new Date().toISOString();
 	const observations: { keyOwner: string; keyHint: string; periodStart: string }[] = [];
 
-	for (const key of provider.keys) {
-		if ((key.type === "expired" || isQuotaExhausted(key)) && !force) continue; // Skip expired or already-exhausted keys unless forced
+  for (const key of provider.keys) {
+		if (key.type === "expired" && !force) continue; // Skip expired keys unless forced
 		const hint = `***${key.key.slice(-8)}`;
 		tested.push(hint);
 
