@@ -314,7 +314,7 @@ export const ProviderCard: React.FC<ProviderCardProps> = ({
                     <Table.Column>Owner</Table.Column>
                     <Table.Column>Type</Table.Column>
                     <Table.Column>Quota</Table.Column>
-                    <Table.Column className="text-end">Actions</Table.Column>
+                    <Table.Column>Actions</Table.Column>
                   </Table.Header>
                   <Table.Body>
                     {provider.keys.map((apiKey, index) => (

@@ -171,7 +171,7 @@ export const ModelPriorityList: React.FC<ModelPriorityListProps> = ({
         <span role="columnheader">Context</span>
         <span role="columnheader">Modalities</span>
         <span role="columnheader">Priority</span>
-        <span role="columnheader" className="text-end">Actions</span>
+        <span role="columnheader">Actions</span>
       </div>
 
       <div className="overflow-x-auto">

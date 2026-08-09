@@ -129,7 +129,7 @@ export const WeatherApiCard: React.FC<WeatherApiCardProps> = ({
                       <Table.Column isRowHeader>Key (Masked)</Table.Column>
                       <Table.Column>Owner</Table.Column>
                       <Table.Column>Type</Table.Column>
-                      <Table.Column className="text-end">Actions</Table.Column>
+                      <Table.Column>Actions</Table.Column>
                     </Table.Header>
                     <Table.Body>
                       {weatherApi.keys.map((apiKey, index) => (
