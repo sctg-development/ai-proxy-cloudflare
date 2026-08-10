@@ -28,10 +28,18 @@ import {
 } from '@heroui/react';
 import { Edit, Key, Plus, Trash2, CreditCard } from 'lucide-react';
 import type { Crawler } from '../../types/ai-config';
+import { ApiService } from '../../lib/api';
 
 interface CreditUsage {
   remainingCredits: number;
   billingPeriodEnd: string;
+  error?: string;
+}
+
+interface CostUsage {
+  totalCostUsd: number;
+  billingPeriodEnd: string;
+  billingPeriodStart: string;
   error?: string;
 }
 
@@ -72,8 +80,10 @@ export const CrawlerCard: React.FC<CrawlerCardProps> = ({
   isByok,
 }) => {
   const [creditUsages, setCreditUsages] = useState<CreditUsage[]>([]);
+  const [costUsages, setCostUsages] = useState<CostUsage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const creditModalState = useOverlayState();
+  const isExa = crawler.protocol === 'exa';
 
   const fetchFirecrawlCreditUsage = async (apiKey: string): Promise<CreditUsage> => {
     try {
@@ -105,24 +115,90 @@ export const CrawlerCard: React.FC<CrawlerCardProps> = ({
         error: error instanceof Error ? error.message : 'Unknown error'
       };
     }
+   };
+
+  const fetchExaCostUsage = async (apiKey: string, managementKey?: string): Promise<CostUsage> => {
+    try {
+      if (!managementKey) {
+        throw new Error('No management key configured for this Exa API key');
+      }
+
+      const userApiKey = ApiService.getToken();
+      if (!userApiKey) {
+        throw new Error('No user API key available for proxy authentication');
+      }
+
+      // The Exa admin API doesn't support CORS, so we route through the backend
+      // CORS proxy. The management key is forwarded as X-API-Key; the user's
+      // vault token authenticates us to the proxy itself.
+      const targetUrl = `https://admin-api.exa.ai/team-management/api-keys/${apiKey}/usage`;
+      const proxyUrl = `${import.meta.env.VAULT_URL}/v1/keypool/corsproxy?url=${encodeURIComponent(targetUrl)}`;
+
+      const response = await fetch(proxyUrl, {
+        method: 'GET',
+        headers: {
+          'X-API-Key': managementKey,
+          'X-Proxy-Authorization': `Bearer ${userApiKey}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const data = await response.json();
+
+      return {
+        totalCostUsd: data.total_cost_usd ?? 0,
+        billingPeriodEnd: data.period?.end ?? '',
+        billingPeriodStart: data.period?.start ?? '',
+      };
+    } catch (error) {
+      return {
+        totalCostUsd: 0,
+        billingPeriodEnd: '',
+        billingPeriodStart: '',
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
   };
 
-  const handleShowCredits = async () => {
+  const handleShowUsage = async () => {
     setIsLoading(true);
     creditModalState.open();
 
     try {
-      const results = await Promise.all(
-        crawler.keys.map(key => fetchFirecrawlCreditUsage(key.key))
-      );
-      setCreditUsages(results);
+      if (isExa) {
+        const results = await Promise.all(
+          crawler.keys.map((key) => fetchExaCostUsage(key.key, key.managementKey))
+        );
+        setCostUsages(results);
+      } else {
+        const results = await Promise.all(
+          crawler.keys.map((key) => fetchFirecrawlCreditUsage(key.key))
+        );
+        setCreditUsages(results);
+      }
     } catch (error) {
-      console.error('Error fetching credit usage:', error);
-      setCreditUsages(crawler.keys.map(() => ({
-        remainingCredits: 0,
-        billingPeriodEnd: '',
-        error: error instanceof Error ? error.message : 'Unknown error'
-      })));
+      console.error('Error fetching usage:', error);
+      if (isExa) {
+        setCostUsages(
+          crawler.keys.map(() => ({
+            totalCostUsd: 0,
+            billingPeriodEnd: '',
+            billingPeriodStart: '',
+            error: error instanceof Error ? error.message : 'Unknown error',
+          })),
+        );
+      } else {
+        setCreditUsages(
+          crawler.keys.map(() => ({
+            remainingCredits: 0,
+            billingPeriodEnd: '',
+            error: error instanceof Error ? error.message : 'Unknown error',
+          })),
+        );
+      }
     } finally {
       setIsLoading(false);
     }
@@ -203,9 +279,9 @@ export const CrawlerCard: React.FC<CrawlerCardProps> = ({
                   <Plus className="mr-2 h-3.5 w-3.5" />
                   Add Key
                 </Button>
-                <Button size="sm" variant="tertiary" onPress={handleShowCredits}>
+                <Button size="sm" variant="tertiary" onPress={handleShowUsage}>
                   <CreditCard className="mr-2 h-3.5 w-3.5" />
-                  Show Credits
+                  {isExa ? 'Show Cost' : 'Show Credits'}
                 </Button>
               </div>
               <Table variant="secondary">
@@ -266,20 +342,83 @@ export const CrawlerCard: React.FC<CrawlerCardProps> = ({
         </Card.Content>
       </Card>
 
-      {/* Credit Usage Modal */}
+      {/* Usage Modal (credits for Firecrawl, cost for Exa) */}
       <Modal state={creditModalState}>
         <Modal.Backdrop>
           <Modal.Container>
             <Modal.Dialog className="sm:max-w-2xl">
               <Modal.Header>
-                <Modal.Heading>Credit Usage for {id}</Modal.Heading>
+                <Modal.Heading>
+                  {isExa ? `Cost Usage for ${id}` : `Credit Usage for ${id}`}
+                </Modal.Heading>
               </Modal.Header>
 
               <Modal.Body>
                 {isLoading ? (
                   <div className="flex justify-center py-8">
-                    <p>Loading credit information...</p>
+                    <p>
+                      {isExa ? 'Loading cost information...' : 'Loading credit information...'}
+                    </p>
                   </div>
+                ) : isExa ? (
+                  <Table variant="secondary">
+                    <Table.ScrollContainer>
+                      <Table.Content aria-label="Cost usage information">
+                        <Table.Header>
+                          <Table.Column isRowHeader>Key (Masked)</Table.Column>
+                          <Table.Column>Total Cost (USD)</Table.Column>
+                          <Table.Column>Billing Period</Table.Column>
+                          <Table.Column>Status</Table.Column>
+                        </Table.Header>
+                        <Table.Body>
+                          {costUsages.map((usage, index) => {
+                            const apiKey = crawler.keys[index];
+                            const daysRemaining = calculateDaysRemaining(usage.billingPeriodEnd);
+                            return (
+                              <Table.Row key={index}>
+                                <Table.Cell className="font-mono">
+                                  {apiKey.key.substring(0, 8)}…
+                                  {apiKey.key.substring(apiKey.key.length - 4)}
+                                </Table.Cell>
+                                <Table.Cell>
+                                  {usage.error ? (
+                                    <span className="text-danger-600">Error: {usage.error}</span>
+                                  ) : (
+                                    `$${usage.totalCostUsd.toFixed(4)}`
+                                  )}
+                                </Table.Cell>
+                                <Table.Cell>
+                                  {usage.error ? 'N/A' : daysRemaining}
+                                </Table.Cell>
+                                <Table.Cell>
+                                  {!usage.error ? (
+                                    <Chip size="sm" variant="soft" color="success">
+                                      Active
+                                    </Chip>
+                                  ) : (
+                                    <Chip size="sm" variant="soft" color="danger">
+                                      Error
+                                    </Chip>
+                                  )}
+                                </Table.Cell>
+                              </Table.Row>
+                            );
+                          })}
+                          {/* Total row */}
+                          <Table.Row key="total">
+                            <Table.Cell className="font-bold">Total</Table.Cell>
+                            <Table.Cell className="font-bold">
+                              ${costUsages
+                                .reduce((total, usage) => total + (usage.error ? 0 : usage.totalCostUsd), 0)
+                                .toFixed(4)}
+                            </Table.Cell>
+                            <Table.Cell className="font-bold">-</Table.Cell>
+                            <Table.Cell className="font-bold">-</Table.Cell>
+                          </Table.Row>
+                        </Table.Body>
+                      </Table.Content>
+                    </Table.ScrollContainer>
+                  </Table>
                 ) : (
                   <Table variant="secondary">
                     <Table.ScrollContainer>
