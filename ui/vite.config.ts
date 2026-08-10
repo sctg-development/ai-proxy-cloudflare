@@ -25,6 +25,7 @@ import { sctgChatbotWorkerAssets } from '@sctg/cline-chatbot/vite-plugin'
 export default defineConfig({
   define: {
     'import.meta.env.VAULT_URL': JSON.stringify(process.env.VAULT_URL || 'https://ai-proxy.inet.pp.ua'),
+    'import.meta.env.EXA_FREE_TIER_GRANT': JSON.stringify(parseInt(process.env.EXA_FREE_TIER_GRANT || '10') || 10),
   },
   plugins: [
     // React plugin enables JSX transform and Fast Refresh in development
