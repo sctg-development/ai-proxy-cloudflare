@@ -1213,6 +1213,10 @@ app.all("/v1/keypool/corsproxy", async (c) => {
 			(init.headers as Record<string, string>)["Authorization"] = c.req.header("Authorization")!;
 		}
 
+		if (c.req.header("X-API-Key")) {
+			(init.headers as Record<string, string>)["X-API-Key"] = c.req.header("X-API-Key")!;
+		}
+
 		// Forward request body if present (for POST, PUT, PATCH, etc.)
 		if (c.req.method !== "GET" && c.req.method !== "HEAD") {
 			try {
