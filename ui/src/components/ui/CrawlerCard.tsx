@@ -118,49 +118,89 @@ export const CrawlerCard: React.FC<CrawlerCardProps> = ({
    };
 
   const fetchExaCostUsage = async (apiKey: string, managementKey?: string): Promise<CostUsage> => {
-    try {
-      if (!managementKey) {
-        throw new Error('No management key configured for this Exa API key');
+    const maxRetries = 3;
+    const baseDelayMs = 1000;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        if (!managementKey) {
+          return {
+            totalCostUsd: 0,
+            billingPeriodEnd: '',
+            billingPeriodStart: '',
+            error: 'No management key configured for this Exa API key',
+          };
+        }
+
+        const userApiKey = ApiService.getToken();
+        if (!userApiKey) {
+          return {
+            totalCostUsd: 0,
+            billingPeriodEnd: '',
+            billingPeriodStart: '',
+            error: 'No user API key available for proxy authentication',
+          };
+        }
+
+        // The Exa admin API doesn't support CORS, so we route through the backend
+        // CORS proxy. The management key is forwarded as X-API-Key; the user's
+        // vault token authenticates us to the proxy itself.
+        const targetUrl = `https://admin-api.exa.ai/team-management/api-keys/${apiKey}/usage`;
+        const proxyUrl = `${import.meta.env.VAULT_URL}/v1/keypool/corsproxy?url=${encodeURIComponent(targetUrl)}`;
+
+        const response = await fetch(proxyUrl, {
+          method: 'GET',
+          headers: {
+            'X-API-Key': managementKey,
+            'X-Proxy-Authorization': `Bearer ${userApiKey}`,
+          },
+        });
+
+        // Retry on 429 (rate limited by proxy or Exa API)
+        if (response.status === 429 && attempt < maxRetries) {
+          const retryAfter = response.headers.get('Retry-After');
+          const delay = retryAfter && !isNaN(Number(retryAfter))
+            ? Number(retryAfter) * 1000
+            : baseDelayMs * Math.pow(2, attempt);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        return {
+          totalCostUsd: data.total_cost_usd ?? 0,
+          billingPeriodEnd: data.period?.end ?? '',
+          billingPeriodStart: data.period?.start ?? '',
+        };
+      } catch (error) {
+        // Network errors are transient — retry if attempts remain
+        const isNetworkError = error instanceof TypeError;
+        if (isNetworkError && attempt < maxRetries) {
+          const delay = baseDelayMs * Math.pow(2, attempt);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+        return {
+          totalCostUsd: 0,
+          billingPeriodEnd: '',
+          billingPeriodStart: '',
+          error: error instanceof Error ? error.message : 'Unknown error',
+        };
       }
-
-      const userApiKey = ApiService.getToken();
-      if (!userApiKey) {
-        throw new Error('No user API key available for proxy authentication');
-      }
-
-      // The Exa admin API doesn't support CORS, so we route through the backend
-      // CORS proxy. The management key is forwarded as X-API-Key; the user's
-      // vault token authenticates us to the proxy itself.
-      const targetUrl = `https://admin-api.exa.ai/team-management/api-keys/${apiKey}/usage`;
-      const proxyUrl = `${import.meta.env.VAULT_URL}/v1/keypool/corsproxy?url=${encodeURIComponent(targetUrl)}`;
-
-      const response = await fetch(proxyUrl, {
-        method: 'GET',
-        headers: {
-          'X-API-Key': managementKey,
-          'X-Proxy-Authorization': `Bearer ${userApiKey}`,
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
-
-      return {
-        totalCostUsd: data.total_cost_usd ?? 0,
-        billingPeriodEnd: data.period?.end ?? '',
-        billingPeriodStart: data.period?.start ?? '',
-      };
-    } catch (error) {
-      return {
-        totalCostUsd: 0,
-        billingPeriodEnd: '',
-        billingPeriodStart: '',
-        error: error instanceof Error ? error.message : 'Unknown error',
-      };
     }
+
+    // Exhausted all retries on 429
+    return {
+      totalCostUsd: 0,
+      billingPeriodEnd: '',
+      billingPeriodStart: '',
+      error: 'Max retries exceeded (rate limited)',
+    };
   };
 
   const handleShowUsage = async () => {
