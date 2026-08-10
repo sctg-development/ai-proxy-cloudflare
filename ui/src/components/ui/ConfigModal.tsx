@@ -254,6 +254,7 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({
         type: (data.type as AiKey['type']) || undefined,
         sharedSecret: data.sharedSecret || undefined,
         signatureType: (data.signatureType as AiKey['signatureType']) || undefined,
+        managementKey: data.managementKey || undefined,
       };
 
       // For crawler keys, we need to handle the crawlerId
@@ -620,6 +621,14 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({
                     >
                       <Label>Signature Type (optional)</Label>
                       <Input placeholder="hmac-md5, hmac-sha256, hmac-sha512" />
+                    </TextField>
+
+                    <TextField
+                      name="managementKey"
+                      defaultValue={getInitialValue('managementKey')}
+                    >
+                      <Label>Management Key (optional)</Label>
+                      <Input type="password" autoComplete="new-password" placeholder="e.g. service key for exa usage retrieval" />
                     </TextField>
                   </>
                 )}

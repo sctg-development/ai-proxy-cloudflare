@@ -63,6 +63,8 @@ export interface AiKey {
   quotaResetAt?: string;
   /** ISO 8601 timestamp: when we learned this key was quota-exhausted (audit only). */
   quotaExhaustedAt?: string;
+  /** Optional management key for administrative purposes for example exa use a service key for retrieving usage*/
+  managementKey?: string;
 }
 
 /**
