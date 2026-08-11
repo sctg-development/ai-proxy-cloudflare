@@ -29,6 +29,7 @@ import { Box, DownloadCloud, Edit, Eye, EyeOff, Key, Plus, Trash2, Clipboard, Ch
 import type { AiProvider, AiModel } from '../../types/ai-config';
 import { ModelPriorityList } from './ModelPriorityList';
 import { ModelDeletionModal } from './ModelDeletionModal';
+import { LobsterIcon } from '../../assets/lobster';
 
 /** Props for {@link ProviderCard}. */
 interface ProviderCardProps {
@@ -298,14 +299,38 @@ export const ProviderCard: React.FC<ProviderCardProps> = ({
             />
           </Tabs.Panel>
 
-          {/* ── API Keys panel ──────────────────────────────────────────── */}
-          <Tabs.Panel id="keys" className="p-4">
-            <div className="mb-2 flex justify-end">
-              <Button size="sm" variant="tertiary" onPress={onAddKey}>
-                <Plus className="mr-2 h-3.5 w-3.5" />
-                Add Key
-              </Button>
-            </div>
+           {/* ── API Keys panel ──────────────────────────────────────────── */}
+           <Tabs.Panel id="keys" className="p-4">
+             <div className="mb-2 flex justify-end">
+               <Button
+                 size="sm"
+                 variant="tertiary"
+                 className="mr-2"
+                 onPress={() => {
+                   const keys = provider.keys.map(k => k.key).join(',');
+                   navigator.clipboard.writeText(keys).then(() => {
+                     // Show feedback by temporarily changing the icon
+                     const button = document.activeElement as HTMLButtonElement | null;
+                     if (button) {
+                       button.style.opacity = '0.5';
+                       setTimeout(() => {
+                         button.style.opacity = '1';
+                       }, 2000);
+                     }
+                   }).catch(err => {
+                     console.error('Failed to copy keys to clipboard:', err);
+                   });
+                 }}
+                 aria-label="Copy all keys"
+               >
+                 <LobsterIcon className="mr-2 h-3.5 w-3.5" />
+                 Copy All Keys
+               </Button>
+               <Button size="sm" variant="tertiary" onPress={onAddKey}>
+                 <Plus className="mr-2 h-3.5 w-3.5" />
+                 Add Key
+               </Button>
+             </div>
             <Table variant="secondary">
               <Table.ScrollContainer>
                 <Table.Content aria-label={`${id} API keys`}>
