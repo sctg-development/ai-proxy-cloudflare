@@ -711,6 +711,7 @@ export const Dashboard: React.FC = () => {
   const buildKeyTestParams = (
     providerId: string,
     keyIndex: number,
+    modelId?: string,
   ): { url: string; authHeaderName: string; authHeaderValue: string; headers: Record<string, string>; body: string; modelId: string } | null => {
     if (!activeConfig) return null;
 
@@ -719,13 +720,18 @@ export const Dashboard: React.FC = () => {
 
     const apiKey: AiKey = provider.keys[keyIndex];
 
-    // Pick the chat model with the lowest priority value (highest priority).
-    const chatModels = provider.models.filter((m) => m.usage === 'chat');
-    if (chatModels.length === 0) return null;
-
-    const testModel = chatModels.reduce((best, m) =>
-      m.priority < best.priority ? m : best,
-    );
+    // Use the specified model, or fall back to the lowest priority value chat model.
+    let testModel: AiModel | undefined;
+    if (modelId) {
+      testModel = provider.models.find((m) => m.id === modelId);
+    } else {
+      const chatModels = provider.models.filter((m) => m.usage === 'chat');
+      if (chatModels.length === 0) return null;
+      testModel = chatModels.reduce((best, m) =>
+        m.priority < best.priority ? m : best,
+      );
+    }
+    if (!testModel) return null;
 
     const endpoint = provider.endpoint.replace(/\/$/, '');
 
@@ -779,13 +785,13 @@ export const Dashboard: React.FC = () => {
    * Worker's `/v1/keypool/corsproxy` endpoint. The raw response is shown in a
    * HeroUI modal so the user can inspect the provider's reply.
    */
-  const testProviderKey = async (providerId: string, keyIndex: number) => {
+  const testProviderKey = async (providerId: string, keyIndex: number, modelId?: string) => {
     if (!activeConfig) return;
 
     const provider = activeConfig.providers[providerId];
     if (!provider || !provider.keys[keyIndex]) return;
 
-    const params = buildKeyTestParams(providerId, keyIndex);
+    const params = buildKeyTestParams(providerId, keyIndex, modelId);
     if (!params) {
       alert('No chat models available for this provider.');
       return;
@@ -839,13 +845,13 @@ export const Dashboard: React.FC = () => {
    * Generates a multi-line bash `curl` command for the provider key and copies
    * it to the clipboard, so the user can paste it into their local terminal.
    */
-  const curlTestProviderKey = (providerId: string, keyIndex: number) => {
+  const curlTestProviderKey = (providerId: string, keyIndex: number, modelId?: string) => {
     if (!activeConfig) return;
 
     const provider = activeConfig.providers[providerId];
     if (!provider || !provider.keys[keyIndex]) return;
 
-    const params = buildKeyTestParams(providerId, keyIndex);
+    const params = buildKeyTestParams(providerId, keyIndex, modelId);
     if (!params) {
       alert('No chat models available for this provider.');
       return;
@@ -1143,8 +1149,8 @@ export const Dashboard: React.FC = () => {
                        newConfig.providers[id].keys.splice(index, 1);
                        stageConfig(newConfig);
                      }}
-                     onTestKey={(index) => testProviderKey(id, index)}
-                     onCurlTestKey={(index) => curlTestProviderKey(id, index)}
+                     onTestKey={(keyIndex, modelId) => testProviderKey(id, keyIndex, modelId)}
+                     onCurlTestKey={(keyIndex, modelId) => curlTestProviderKey(id, keyIndex, modelId)}
                     onDeleteModel={(modelId) => {
                       deleteProviderModels(id, [modelId]);
                     }}

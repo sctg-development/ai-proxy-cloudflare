@@ -21,6 +21,9 @@ import {
   Button,
   Card,
   Chip,
+  ListBox,
+  ListBoxItem,
+  Select,
   Table,
   Tabs,
   useOverlayState,
@@ -51,10 +54,10 @@ interface ProviderCardProps {
   onEditModel: (id: string) => void;
   /** Called with the array index of the key to delete. */
   onDeleteKey: (index: number) => void;
-  /** Called with the array index of the key to test via corsproxy. */
-  onTestKey?: (index: number) => void;
-  /** Called with the array index of the key to generate a curl command for. */
-  onCurlTestKey?: (index: number) => void;
+  /** Called with the array index of the key to test via corsproxy and the selected model id. */
+  onTestKey?: (index: number, modelId: string) => void;
+  /** Called with the array index of the key to generate a curl command for and the selected model id. */
+  onCurlTestKey?: (index: number, modelId: string) => void;
   /** Called with the model.id to delete. */
   onDeleteModel: (id: string) => void;
   /** Called with every selected model id to delete as one draft operation. */
@@ -130,6 +133,15 @@ export const ProviderCard: React.FC<ProviderCardProps> = ({
   const [copiedKeyIndex, setCopiedKeyIndex] = useState<number | null>(null);
   const [modelsToDelete, setModelsToDelete] = useState<AiModel[]>([]);
   const deletionModalState = useOverlayState();
+
+  /**
+   * The model selected for key test / curl test actions.
+   * Defaults to the model with the lowest priority value (highest priority).
+   */
+  const [selectedTestModelId, setSelectedTestModelId] = useState<string>(() => {
+    const sorted = [...provider.models].sort((a, b) => a.priority - b.priority);
+    return sorted[0]?.id ?? '';
+  });
 
   // Detect models that exist in config but not in API response
   const detectMissingModels = () => {
@@ -305,38 +317,73 @@ export const ProviderCard: React.FC<ProviderCardProps> = ({
             />
           </Tabs.Panel>
 
-           {/* ── API Keys panel ──────────────────────────────────────────── */}
-           <Tabs.Panel id="keys" className="p-4">
-             <div className="mb-2 flex justify-end">
-               <Button
-                 size="sm"
-                 variant="tertiary"
-                 className="mr-2"
-                 onPress={() => {
-                   const keys = provider.keys.map(k => k.key).join(',');
-                   navigator.clipboard.writeText(keys).then(() => {
-                     // Show feedback by temporarily changing the icon
-                     const button = document.activeElement as HTMLButtonElement | null;
-                     if (button) {
-                       button.style.opacity = '0.5';
-                       setTimeout(() => {
-                         button.style.opacity = '1';
-                       }, 2000);
-                     }
-                   }).catch(err => {
-                     console.error('Failed to copy keys to clipboard:', err);
-                   });
-                 }}
-                 aria-label="Copy all keys"
-               >
-                 <LobsterIcon className="mr-2 h-3.5 w-3.5" />
-                 Copy All Keys
-               </Button>
-               <Button size="sm" variant="tertiary" onPress={onAddKey}>
-                 <Plus className="mr-2 h-3.5 w-3.5" />
-                 Add Key
-               </Button>
-             </div>
+            {/* ── API Keys panel ──────────────────────────────────────────── */}
+            <Tabs.Panel id="keys" className="p-4">
+              <div className="mb-2 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Select
+                    selectedKey={selectedTestModelId}
+                    onSelectionChange={(keys) => {
+                      // RAC's Select passes a single Key in single-selection mode
+                      setSelectedTestModelId(typeof keys === 'string' && keys !== 'all' ? keys : '');
+                    }}
+                    placeholder="Select model"
+                    aria-label="Select model for key tests"
+                    className="w-64"
+                  >
+                    <Select.Trigger>
+                      <Select.Value />
+                    </Select.Trigger>
+                    <Select.Popover>
+                      <ListBox>
+                        {[...provider.models]
+                          .sort((a, b) => a.priority - b.priority)
+                          .map((model) => (
+                            <ListBoxItem key={model.id} id={model.id} textValue={model.id}>
+                              <div className="flex items-center justify-between gap-2">
+                                <span>{model.id}</span>
+                                <span className="text-xs text-muted-foreground">({model.usage})</span>
+                              </div>
+                            </ListBoxItem>
+                          ))}
+                      </ListBox>
+                    </Select.Popover>
+                  </Select>
+                  <span className="text-xs text-muted-foreground">
+                    (priority ascending)
+                  </span>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="tertiary"
+                    className="mr-2"
+                    onPress={() => {
+                      const keys = provider.keys.map(k => k.key).join(',');
+                      navigator.clipboard.writeText(keys).then(() => {
+                        // Show feedback by temporarily changing the icon
+                        const button = document.activeElement as HTMLButtonElement | null;
+                        if (button) {
+                          button.style.opacity = '0.5';
+                          setTimeout(() => {
+                            button.style.opacity = '1';
+                          }, 2000);
+                        }
+                      }).catch(err => {
+                        console.error('Failed to copy keys to clipboard:', err);
+                      });
+                    }}
+                    aria-label="Copy all keys"
+                  >
+                    <LobsterIcon className="mr-2 h-3.5 w-3.5" />
+                    Copy All Keys
+                  </Button>
+                  <Button size="sm" variant="tertiary" onPress={onAddKey}>
+                    <Plus className="mr-2 h-3.5 w-3.5" />
+                    Add Key
+                  </Button>
+                </div>
+              </div>
             <Table variant="secondary">
               <Table.ScrollContainer>
                 <Table.Content aria-label={`${id} API keys`}>
@@ -417,7 +464,7 @@ export const ProviderCard: React.FC<ProviderCardProps> = ({
                                 isIconOnly
                                 size="sm"
                                 variant="ghost"
-                                onPress={() => onTestKey(index)}
+                                onPress={() => onTestKey(index, selectedTestModelId)}
                                 aria-label={`Test key ${index}`}
                               >
                                 <TestTube className="h-3.5 w-3.5" />
@@ -428,7 +475,7 @@ export const ProviderCard: React.FC<ProviderCardProps> = ({
                                 isIconOnly
                                 size="sm"
                                 variant="ghost"
-                                onPress={() => onCurlTestKey(index)}
+                                onPress={() => onCurlTestKey(index, selectedTestModelId)}
                                 aria-label={`Curl test key ${index}`}
                               >
                                 <Terminal className="h-3.5 w-3.5" />
