@@ -27,6 +27,7 @@ import {
   Alert,
   Button,
   Chip,
+  Modal,
   Tabs,
   useOverlayState,
 } from '@heroui/react';
@@ -47,7 +48,7 @@ import {
   Cloud,
    BarChart,
  } from 'lucide-react';
-import type { AiConfig, AiModel } from '../types/ai-config';
+import type { AiConfig, AiKey, AiModel } from '../types/ai-config';
 import {
   canDiscoverProviderModels,
   discoverProviderModels,
@@ -129,6 +130,21 @@ export const Dashboard: React.FC = () => {
 
   /** Set of weather API IDs that are available for BYOK. */
   const [byokWeatherApiIds, setByokWeatherApiIds] = useState<Set<string>>(new Set());
+
+  /** Result of the last key test — displayed in a HeroUI modal. */
+  const [keyTestResult, setKeyTestResult] = useState<{
+    providerId: string;
+    keyIndex: number;
+    keyHint: string;
+    response: string;
+    status: number;
+    isError: boolean;
+  } | null>(null);
+
+  /**
+   * Controlled open/close state for the key test result modal.
+   */
+  const keyTestResultState = useOverlayState();
 
 
   /**
@@ -687,6 +703,181 @@ export const Dashboard: React.FC = () => {
     stageConfig(newConfig);
   };
 
+  /**
+   * Builds the request parameters for testing a provider key against the
+   * provider's own API. Returns the URL, auth header name/value, and the
+   * request body appropriate for the provider's protocol.
+   */
+  const buildKeyTestParams = (
+    providerId: string,
+    keyIndex: number,
+  ): { url: string; authHeaderName: string; authHeaderValue: string; headers: Record<string, string>; body: string; modelId: string } | null => {
+    if (!activeConfig) return null;
+
+    const provider = activeConfig.providers[providerId];
+    if (!provider || !provider.keys[keyIndex]) return null;
+
+    const apiKey: AiKey = provider.keys[keyIndex];
+
+    // Pick the chat model with the lowest priority value (highest priority).
+    const chatModels = provider.models.filter((m) => m.usage === 'chat');
+    if (chatModels.length === 0) return null;
+
+    const testModel = chatModels.reduce((best, m) =>
+      m.priority < best.priority ? m : best,
+    );
+
+    const endpoint = provider.endpoint.replace(/\/$/, '');
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+
+    const body = JSON.stringify({
+      model: testModel.id,
+      messages: [{ role: 'user', content: 'Hello' }],
+      max_tokens: 10,
+    });
+
+    let url: string;
+    let authHeaderName: string;
+    let authHeaderValue: string;
+
+    switch (provider.protocol) {
+      case 'anthropic':
+        url = `${endpoint}/v1/messages`;
+        authHeaderName = 'x-api-key';
+        authHeaderValue = apiKey.key;
+        headers['anthropic-version'] = '2023-06-01';
+        break;
+      case 'gemini':
+        url = `${endpoint}/v1/models/${testModel.id}:generateContent?key=${apiKey.key}`;
+        authHeaderName = '';
+        authHeaderValue = '';
+        return {
+          url,
+          authHeaderName,
+          authHeaderValue,
+          headers,
+          body: JSON.stringify({
+            contents: [{ role: 'user', parts: [{ text: 'Hello' }] }],
+          }),
+          modelId: testModel.id,
+        };
+      default:
+        url = `${endpoint}/chat/completions`;
+        authHeaderName = 'Authorization';
+        authHeaderValue = `Bearer ${apiKey.key}`;
+        break;
+    }
+
+    return { url, authHeaderName, authHeaderValue, headers, body, modelId: testModel.id };
+  };
+
+  /**
+   * Tests a provider API key by sending a minimal chat request through the
+   * Worker's `/v1/keypool/corsproxy` endpoint. The raw response is shown in a
+   * HeroUI modal so the user can inspect the provider's reply.
+   */
+  const testProviderKey = async (providerId: string, keyIndex: number) => {
+    if (!activeConfig) return;
+
+    const provider = activeConfig.providers[providerId];
+    if (!provider || !provider.keys[keyIndex]) return;
+
+    const params = buildKeyTestParams(providerId, keyIndex);
+    if (!params) {
+      alert('No chat models available for this provider.');
+      return;
+    }
+
+    const userToken = ApiService.getToken();
+    const apiKey = provider.keys[keyIndex];
+
+    const fetchHeaders: Record<string, string> = {
+      ...params.headers,
+      'X-Proxy-Authorization': `Bearer ${userToken}`,
+    };
+    if (params.authHeaderName) {
+      fetchHeaders[params.authHeaderName] = params.authHeaderValue;
+    }
+
+    try {
+      const response = await fetch(
+        `${import.meta.env.VAULT_URL}/v1/keypool/corsproxy?url=${encodeURIComponent(params.url)}`,
+        {
+          method: 'POST',
+          headers: fetchHeaders,
+          body: params.body,
+        },
+      );
+
+      const responseText = await response.text();
+      setKeyTestResult({
+        providerId,
+        keyIndex,
+        keyHint: maskApiKey(apiKey.key),
+        response: responseText,
+        status: response.status,
+        isError: !response.ok,
+      });
+      keyTestResultState.open();
+    } catch (err) {
+      setKeyTestResult({
+        providerId,
+        keyIndex,
+        keyHint: maskApiKey(apiKey.key),
+        response: err instanceof Error ? err.message : 'Unknown error',
+        status: 0,
+        isError: true,
+      });
+      keyTestResultState.open();
+    }
+  };
+
+  /**
+   * Generates a multi-line bash `curl` command for the provider key and copies
+   * it to the clipboard, so the user can paste it into their local terminal.
+   */
+  const curlTestProviderKey = (providerId: string, keyIndex: number) => {
+    if (!activeConfig) return;
+
+    const provider = activeConfig.providers[providerId];
+    if (!provider || !provider.keys[keyIndex]) return;
+
+    const params = buildKeyTestParams(providerId, keyIndex);
+    if (!params) {
+      alert('No chat models available for this provider.');
+      return;
+    }
+
+    const apiKey = provider.keys[keyIndex];
+
+    const headerLines: string[] = [];
+    if (params.authHeaderName) {
+      headerLines.push(`  -H "${params.authHeaderName}: ${params.authHeaderValue}" \\`);
+    }
+    for (const [name, value] of Object.entries(params.headers)) {
+      if (name === 'Content-Type') continue;
+      headerLines.push(`  -H "${name}: ${value}" \\`);
+    }
+
+    const bodyJson = params.body.replace(/'/g, "'\\''");
+    const curlCommand = [
+      'curl -X POST \\',
+      `  "${params.url}" \\`,
+      `  -H "Content-Type: application/json" \\`,
+      ...headerLines,
+      `  -d '${bodyJson}'`,
+    ].join('\n');
+
+    navigator.clipboard.writeText(curlCommand).then(() => {
+      alert(`Curl command copied to clipboard for key: ${maskApiKey(apiKey.key)}`);
+    }).catch(() => {
+      alert('Failed to copy curl command to clipboard. Please copy manually:\n\n' + curlCommand);
+    });
+  };
+
   // ── Render guards ─────────────────────────────────────────────────────────
 
   if (!activeConfig && loading) {
@@ -946,12 +1137,14 @@ export const Dashboard: React.FC = () => {
                         itemId: modelId,
                       })
                     }
-                    onDeleteKey={(index) => {
-                      // Immutably remove the key at `index` from the array.
-                      const newConfig: AiConfig = JSON.parse(JSON.stringify(activeConfig));
-                      newConfig.providers[id].keys.splice(index, 1);
-                      stageConfig(newConfig);
-                    }}
+                     onDeleteKey={(index) => {
+                       // Immutably remove the key at `index` from the array.
+                       const newConfig: AiConfig = JSON.parse(JSON.stringify(activeConfig));
+                       newConfig.providers[id].keys.splice(index, 1);
+                       stageConfig(newConfig);
+                     }}
+                     onTestKey={(index) => testProviderKey(id, index)}
+                     onCurlTestKey={(index) => curlTestProviderKey(id, index)}
                     onDeleteModel={(modelId) => {
                       deleteProviderModels(id, [modelId]);
                     }}
@@ -1097,6 +1290,51 @@ export const Dashboard: React.FC = () => {
         config={activeConfig}
         onSave={stageConfig}
       />
+
+      {/* ── Key test result modal ─────────────────────────────────────────── */}
+      <Modal state={keyTestResultState}>
+        <Modal.Backdrop>
+          <Modal.Container>
+            <Modal.Dialog className="max-w-2xl max-h-[80vh]">
+              <Modal.Header>
+                <Modal.Heading>
+                  Key Test Result
+                </Modal.Heading>
+              </Modal.Header>
+              <Modal.Body>
+                {keyTestResult && (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm text-muted-foreground">
+                        Provider: <span className="font-mono">{keyTestResult.providerId}</span> ·
+                        Key: <span className="font-mono">{keyTestResult.keyHint}</span> ·
+                        HTTP Status: <span className="font-mono">{keyTestResult.status}</span>
+                      </p>
+                      <Chip
+                        size="sm"
+                        variant="soft"
+                        color={keyTestResult.isError ? 'danger' : 'success'}
+                      >
+                        {keyTestResult.isError ? 'Error' : 'Success'}
+                      </Chip>
+                    </div>
+                    <pre className="bg-muted/10 p-4 rounded-md overflow-auto text-sm font-mono whitespace-pre-wrap break-all">
+                      {keyTestResult.response}
+                    </pre>
+                  </div>
+                )}
+              </Modal.Body>
+              <Modal.Footer>
+                <Button variant="ghost" onPress={() => keyTestResultState.close()}>
+                  <X className="mr-2 h-4 w-4" />
+                  Close
+                </Button>
+              </Modal.Footer>
+              <Modal.CloseTrigger />
+            </Modal.Dialog>
+          </Modal.Container>
+        </Modal.Backdrop>
+      </Modal>
     </div>
   );
 };

@@ -25,7 +25,7 @@ import {
   Tabs,
   useOverlayState,
 } from '@heroui/react';
-import { Box, DownloadCloud, Edit, Eye, EyeOff, Key, Plus, Trash2, Clipboard, Check } from 'lucide-react';
+import { Box, DownloadCloud, Edit, Eye, EyeOff, Key, Plus, Trash2, Clipboard, Check, TestTube, Terminal } from 'lucide-react';
 import type { AiProvider, AiModel } from '../../types/ai-config';
 import { ModelPriorityList } from './ModelPriorityList';
 import { ModelDeletionModal } from './ModelDeletionModal';
@@ -51,6 +51,10 @@ interface ProviderCardProps {
   onEditModel: (id: string) => void;
   /** Called with the array index of the key to delete. */
   onDeleteKey: (index: number) => void;
+  /** Called with the array index of the key to test via corsproxy. */
+  onTestKey?: (index: number) => void;
+  /** Called with the array index of the key to generate a curl command for. */
+  onCurlTestKey?: (index: number) => void;
   /** Called with the model.id to delete. */
   onDeleteModel: (id: string) => void;
   /** Called with every selected model id to delete as one draft operation. */
@@ -102,6 +106,8 @@ export const ProviderCard: React.FC<ProviderCardProps> = ({
   onAddKey,
   onAddModel,
   onEditKey,
+  onTestKey,
+  onCurlTestKey,
   onEditModel,
   onDeleteKey,
   onDeleteModel,
@@ -406,6 +412,28 @@ export const ProviderCard: React.FC<ProviderCardProps> = ({
                         </Table.Cell>
                         <Table.Cell>
                           <div className="flex justify-end gap-1">
+                            {onTestKey && (
+                              <Button
+                                isIconOnly
+                                size="sm"
+                                variant="ghost"
+                                onPress={() => onTestKey(index)}
+                                aria-label={`Test key ${index}`}
+                              >
+                                <TestTube className="h-3.5 w-3.5" />
+                              </Button>
+                            )}
+                            {onCurlTestKey && (
+                              <Button
+                                isIconOnly
+                                size="sm"
+                                variant="ghost"
+                                onPress={() => onCurlTestKey(index)}
+                                aria-label={`Curl test key ${index}`}
+                              >
+                                <Terminal className="h-3.5 w-3.5" />
+                              </Button>
+                            )}
                             <Button
                               isIconOnly
                               size="sm"
