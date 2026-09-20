@@ -30,7 +30,12 @@ import {
   SUPPORTED_VIDEO_TYPES,
 } from './constants';
 
-/** Converts a File to its base64 data string (no data-URL prefix). */
+/**
+ * Converts a File to its base64 data string (no data-URL prefix).
+ *
+ * @param file - The File object to convert.
+ * @returns A promise resolving to the Base64-encoded string.
+ */
 export const fileToBase64 = (file: File): Promise<string> =>
   new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -42,7 +47,12 @@ export const fileToBase64 = (file: File): Promise<string> =>
     reader.readAsDataURL(file);
   });
 
-/** Reads a File as UTF-8 text, returning null if it fails. */
+/**
+ * Reads a File as UTF-8 text, returning null if it fails.
+ *
+ * @param file - The File object to read.
+ * @returns A promise resolving to the file's text content, or `null` on error.
+ */
 export const fileToText = async (file: File): Promise<string | null> => {
   try {
     return await file.text();
@@ -51,7 +61,12 @@ export const fileToText = async (file: File): Promise<string | null> => {
   }
 };
 
-/** Returns the PlaygroundPart type that best describes the file's MIME type. */
+/**
+ * Returns the PlaygroundPart type that best describes the file's MIME type.
+ *
+ * @param file - The File object to classify.
+ * @returns One of `'image'`, `'audio'`, `'video'`, or `'file'`.
+ */
 export const getFileKind = (
   file: File,
 ): 'image' | 'audio' | 'video' | 'file' => {
@@ -67,11 +82,21 @@ export const getFileKind = (
   return 'file';
 };
 
-/** Returns true if the file can be safely encoded as inline base64. */
+/**
+ * Returns true if the file can be safely encoded as inline base64.
+ *
+ * @param file - The File object to check.
+ * @returns True if the file size is within the inline limit (8 MB).
+ */
 export const isInlineable = (file: File): boolean =>
   file.size <= MAX_INLINE_FILE_BYTES;
 
-/** Returns true if the file is small enough to embed as plain text context. */
+/**
+ * Returns true if the file is small enough to embed as plain text context.
+ *
+ * @param file - The File object to check.
+ * @returns True if the file size is within the text-context limit (256 KB).
+ */
 export const isTextContextFile = (file: File): boolean =>
   file.size <= MAX_TEXT_CONTEXT_FILE_BYTES;
 
@@ -84,6 +109,9 @@ export const isTextContextFile = (file: File): boolean =>
  *
  * The caller is responsible for revoking any Object URLs stored in
  * `thumbnailUrl` when the part is removed from state.
+ *
+ * @param file - The File object from a file input.
+ * @returns A promise resolving to the appropriate PlaygroundPart.
  */
 export const createPartFromFile = async (file: File): Promise<PlaygroundPart> => {
   const kind = getFileKind(file);
@@ -147,7 +175,13 @@ export const createPartFromFile = async (file: File): Promise<PlaygroundPart> =>
   };
 };
 
-/** Converts a list of Files to parts, skipping files that exceed the inline size limit. */
+/**
+ * Converts a list of Files to parts, skipping files that exceed the inline size limit.
+ *
+ * @param files - Array of File objects from a file input.
+ * @param onSkipped - Optional callback invoked for each skipped file with a reason string.
+ * @returns A promise resolving to an array of playground parts.
+ */
 export const createPartsFromFiles = async (
   files: File[],
   onSkipped?: (file: File, reason: string) => void,
@@ -167,14 +201,23 @@ export const createPartsFromFiles = async (
   return parts;
 };
 
-/** Revokes any Object URLs embedded in a part's thumbnailUrl. */
+/**
+ * Revokes any Object URLs embedded in a part's `thumbnailUrl`.
+ *
+ * @param part - The playground part whose Object URLs should be revoked.
+ */
 export const revokePartObjectUrls = (part: PlaygroundPart): void => {
   if ('thumbnailUrl' in part && typeof part.thumbnailUrl === 'string' && part.thumbnailUrl.startsWith('blob:')) {
     URL.revokeObjectURL(part.thumbnailUrl);
   }
 };
 
-/** Formats file size for display. */
+/**
+ * Formats file size for display.
+ *
+ * @param bytes - The number of bytes to format.
+ * @returns A human-readable string like `"1.5 MB"` or `"512 B"`.
+ */
 export const formatBytes = (bytes: number): string => {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;

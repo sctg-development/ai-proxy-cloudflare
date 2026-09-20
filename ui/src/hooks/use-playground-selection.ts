@@ -21,24 +21,43 @@ import type React from 'react';
 import type { AiConfig, AiModel, AiProvider } from '../types/ai-config';
 import { AUTO_ROUND_ROBIN_KEY } from '../lib/playground/constants';
 
+/**
+ * State returned by the {@link usePlaygroundSelection} hook.
+ */
 export interface PlaygroundSelectionState {
+  /** Sorted list of all provider IDs from the config. */
   providerIds: string[];
+  /** The currently selected provider ID. */
   providerId: string;
+  /** The currently selected model ID. */
   modelId: string;
+  /** The currently selected API key, or the `AUTO_ROUND_ROBIN_KEY` sentinel. */
   selectedKey: string;
+  /** The resolved provider object (looked up from the config). */
   provider?: AiProvider;
+  /** The active model object matching `modelId`, if found. */
   activeModel?: AiModel;
+  /** Chat-capable models from the active provider, sorted by priority. */
   chatModels: AiModel['id'] extends string ? AiModel[] : never;
+  /** Non-empty API keys from the active provider. */
   usableKeys: AiProvider['keys'];
+  /** The key used in the previous request (for round-robin tracking). */
   lastUsedProviderKey: string;
+  /** Setter for the selected provider ID. */
   setProviderId: React.Dispatch<React.SetStateAction<string>>;
+  /** Setter for the selected model ID. */
   setModelId: React.Dispatch<React.SetStateAction<string>>;
+  /** Setter for the selected API key. */
   setSelectedKey: React.Dispatch<React.SetStateAction<string>>;
+  /** Setter for the last-used provider key. */
   setLastUsedProviderKey: React.Dispatch<React.SetStateAction<string>>;
+  /** Setter for the max tokens slider. */
   setMaxTokens: React.Dispatch<React.SetStateAction<number>>;
+  /** Returns the API key that would be used for the current request. */
   resolveProviderKey: () => string;
   /** Returns the key that would be used after one round-robin advance. */
   resolveNextProviderKey: () => string;
+  /** Advances the round-robin key index by one position (auto mode only). */
   advanceRoundRobinKey: () => void;
 }
 
@@ -46,6 +65,10 @@ export interface PlaygroundSelectionState {
  * Manages provider / model / API-key selection state for the playground.
  * Keeps the three selects in sync when the config changes and handles
  * the round-robin key rotation logic.
+ *
+ * @param config - The full AI configuration containing all providers and models.
+ * @param setMaxTokens - Setter from the parent component to sync the max-tokens limit.
+ * @returns The selection state and derived helpers.
  */
 export const usePlaygroundSelection = (
   config: AiConfig,
@@ -105,6 +128,7 @@ export const usePlaygroundSelection = (
     }
   }, [usableKeys, selectedKey]);
 
+  /** Resolves the API key to use for the current request (round-robin or manual). */
   const resolveProviderKey = useCallback((): string => {
     if (usableKeys.length === 0) return '';
     if (selectedKey === AUTO_ROUND_ROBIN_KEY) {
@@ -113,6 +137,7 @@ export const usePlaygroundSelection = (
     return selectedKey;
   }, [autoKeyIndex, selectedKey, usableKeys]);
 
+  /** Returns the key that would be used after one round-robin advance. */
   const resolveNextProviderKey = useCallback((): string => {
     if (usableKeys.length === 0) return '';
     if (selectedKey === AUTO_ROUND_ROBIN_KEY) {
@@ -121,6 +146,7 @@ export const usePlaygroundSelection = (
     return selectedKey;
   }, [autoKeyIndex, selectedKey, usableKeys]);
 
+  /** Advances the round-robin key index by one position (only in auto mode). */
   const advanceRoundRobinKey = useCallback(() => {
     if (selectedKey !== AUTO_ROUND_ROBIN_KEY || usableKeys.length === 0) return;
     setAutoKeyIndex((i) => (i + 1) % usableKeys.length);

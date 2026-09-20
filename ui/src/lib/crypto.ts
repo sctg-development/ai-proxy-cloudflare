@@ -23,9 +23,13 @@
 /**
  * Encrypts a string using PBKDF2 and AES-256-CBC, compatible with OpenSSL "Salted__" format.
  *
- * @param plaintext The string to encrypt.
- * @param password The password for derivation.
- * @returns Base64 encoded ciphertext with "Salted__" header.
+ * This function mirrors the worker-side `src/lib/ai-enc.ts` so that vault files
+ * encrypted in the browser can be decrypted by the Worker (and vice-versa).
+ *
+ * @param plaintext - The plain-text string to encrypt.
+ * @param password - The password used for key derivation.
+ * @returns A Base64-encoded string containing the `"Salted__"` header, salt, and ciphertext.
+ * @throws May reject if the Web Crypto API is unavailable or the password is empty.
  */
 export async function encryptVault(plaintext: string, password: string): Promise<string> {
   const encoder = new TextEncoder();
@@ -87,10 +91,12 @@ export async function encryptVault(plaintext: string, password: string): Promise
  * Decrypts ai.json.enc encrypted with OpenSSL aes-256-cbc format.
  * Matches the logic in src/lib/ai-enc.ts decryptAiConfig function.
  *
- * @param base64Ciphertext Base64 encoded ciphertext with "Salted__" header.
- * @param password The password for decryption.
- * @returns Decrypted string.
- * @throws Error if decryption fails or format is invalid.
+ * The expected binary layout is: `"Salted__"` (8 bytes) + salt (8 bytes) + ciphertext.
+ *
+ * @param base64Ciphertext - Base64 encoded ciphertext with "Salted__" header.
+ * @param password - The password for decryption (same as the vault token).
+ * @returns The decrypted plain-text string.
+ * @throws Error if the ciphertext lacks the "Salted__" header or decryption fails.
  */
 export async function decryptAiConfig(
   base64Ciphertext: string,

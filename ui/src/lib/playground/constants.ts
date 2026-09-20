@@ -19,10 +19,16 @@
 /** Sentinel value for the API key selector meaning "cycle all keys". */
 export const AUTO_ROUND_ROBIN_KEY = '__auto_round_robin__';
 
+/** IndexedDB database name used by the playground for conversation persistence. */
 export const PLAYGROUND_DATABASE_NAME = 'chatbot-playground';
+
+/** Object store name within the playground IndexedDB database. */
 export const PLAYGROUND_CONVERSATION_STORE = 'conversations';
+
+/** Conversation ID used when no specific conversation is selected. */
 export const DEFAULT_CONVERSATION_ID = 'default';
 
+/** Default system prompt prepended to every playground conversation. */
 export const DEFAULT_SYSTEM_PROMPT = 'You are a concise, accurate, and helpful AI assistant.';
 
 /** Maximum size for inline base64 file payloads (8 MB). */
@@ -31,6 +37,7 @@ export const MAX_INLINE_FILE_BYTES = 8 * 1024 * 1024;
 /** Maximum size for plain-text context files embedded as XML (256 KB). */
 export const MAX_TEXT_CONTEXT_FILE_BYTES = 256 * 1024;
 
+/** MIME types accepted for image upload in the playground. */
 export const SUPPORTED_IMAGE_TYPES = [
   'image/png',
   'image/jpeg',
@@ -38,6 +45,7 @@ export const SUPPORTED_IMAGE_TYPES = [
   'image/webp',
 ] as const;
 
+/** MIME types accepted for audio upload in the playground. */
 export const SUPPORTED_AUDIO_TYPES = [
   'audio/mpeg',
   'audio/mp3',
@@ -47,6 +55,7 @@ export const SUPPORTED_AUDIO_TYPES = [
   'audio/webm',
 ] as const;
 
+/** MIME types accepted for video upload in the playground. */
 export const SUPPORTED_VIDEO_TYPES = [
   'video/mp4',
   'video/quicktime',

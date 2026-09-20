@@ -26,41 +26,62 @@ import { decryptAiConfig } from './crypto';
  * User context returned by the /v1/auth/me endpoint.
  */
 export interface UserContext {
+  /** The authenticated user's username. */
   username: string;
+  /** The vault ID this user is authorized to access. */
   vaultId: string;
+  /** The user's role within the multi-group architecture. */
   role: UserRole;
+  /** Whether the user is on the legacy single-vault flow (pre-multi-group). */
   isLegacy: boolean;
+  /** Multi-group: the group this user belongs to. Absent for legacy users. */
   groupId?: string;
+  /** Human-readable name of the group the user belongs to. */
   groupName?: string;
 }
 
-/** A group as returned by GET /v1/groups. */
 export interface GroupSummary {
+  /** Unique identifier of the group. */
   id: string;
+  /** Human-readable group name. */
   name: string;
+  /** Epoch timestamp (ms) when the group was created. */
   createdAt: number;
+  /** Username of the group creator, if known. */
   createdBy?: string;
+  /** Whether the group's vault is the legacy `vault:ai.json.enc` blob. */
   legacy: boolean;
+  /** Number of users in the group. */
   memberCount: number;
 }
 
-/** A group member as returned by GET /v1/groups/:id/users. */
 export interface GroupMember {
+  /** Username of the group member. */
   username: string;
+  /** The key owner identifier (key Hint for encryption). */
   owner: string;
+  /** The member's role within this group. */
   role: UserRole;
+  /** Short hint identifying which API key the user holds, or null. */
   keyHint: string | null;
 }
 
-/** One recorded quota-exhaustion observation, as returned by GET /v1/keypool/quota-observations. */
 export interface QuotaObservation {
+  /** ID of the provider that exhausted a key. */
   provider: string;
+  /** Owner name of the exhausted key. */
   keyOwner: string;
+  /** Short hint identifying which key was exhausted. */
   keyHint: string;
+  /** ISO 8601 timestamp when the exhaustion was observed. */
   observedAt: string;
+  /** ISO 8601 timestamp of the billing/usage period start. */
   periodStart: string;
+  /** Number of prompt tokens consumed before the key was exhausted. */
   promptTokens: number;
+  /** Number of completion tokens consumed before the key was exhausted. */
   completionTokens: number;
+  /** Number of requests made before the key was exhausted. */
   requestCount: number;
 }
 
@@ -68,32 +89,43 @@ export interface QuotaObservation {
  * Interface for API response errors.
  */
 export interface ApiError {
+  /** Short machine-readable error code (e.g. `"Unauthorized"`). */
   error: string;
+  /** Optional human-readable error message providing more detail. */
   message?: string;
 }
 
+/**
+ * Optional parameters that control how a chat completion request is routed.
+ */
 export interface ChatCompletionOptions {
+  /** When set to `'auto'`, the Worker cycles through available keys; `'manual'` uses a specific key. */
   providerKeyMode?: 'auto' | 'manual';
+  /** The provider API key to use when `providerKeyMode` is `'manual'`. */
   providerApiKey?: string;
 }
 
 /**
  * Service to handle communication with the Worker.
+ * Provides methods for authentication, config fetching/updating, group
+ * administration, key health checks, and chat completion proxying.
  */
 export const ApiService = {
   /**
-   * Get the auth token from session storage.
-   * @returns The token or null if not set.
-   */
-  getToken(): string | null {
+    * Get the auth token from session storage.
+    *
+    * @returns The token string, or null if not set.
+    */
+   getToken(): string | null {
     return sessionStorage.getItem('ai_vault_token');
   },
 
-  /**
-   * Save the auth token to session storage.
-   * @param token The token to store.
-   */
-  setToken(token: string): void {
+   /**
+    * Save the auth token to session storage.
+    *
+    * @param token - The token string to store.
+    */
+   setToken(token: string): void {
     sessionStorage.setItem('ai_vault_token', token);
   },
 
@@ -104,12 +136,14 @@ export const ApiService = {
     sessionStorage.removeItem('ai_vault_token');
   },
 
-  /**
-   * Fetch the decrypted configuration.
-   * @returns The AiConfig object.
-   * @throws Error if unauthorized or fetch fails.
-   */
-  async fetchConfig(): Promise<AiConfig> {
+   /**
+    * Fetch the decrypted configuration from the Worker.
+    * Downloads the encrypted vault and decrypts it client-side using the auth token.
+    *
+    * @returns A promise resolving to the parsed `AiConfig` object.
+    * @throws Error if no token is found, the request is unauthorized, or decryption fails.
+    */
+   async fetchConfig(): Promise<AiConfig> {
     const token = this.getToken();
     if (!token) throw new Error('No authorization token found');
 
@@ -131,20 +165,14 @@ export const ApiService = {
   },
 
   /**
-   * Update the encrypted vault.
-   * Note: This requires the encrypted payload, which in this UI we assume
-   * we manage by re-encrypting or the worker handles the encryption logic
-   * if we send it as plain JSON to a specific endpoint.
+   * Update the encrypted vault by uploading a new encrypted payload.
    *
-   * Looking at src/index.ts, PUT /ai.json.enc EXPECTS an encrypted body.
-   * But we don't have the encryption logic in the browser easily without the password.
-   * Actually, the password IS the token.
+   * The Worker expects a PUT to `/ai.json.enc` with an encrypted body.
+   * Since the browser has access to the decryption utilities (`encryptVault`),
+   * the caller can re-encrypt the edited JSON before calling this method.
    *
-   * WAIT: The worker's GET /ai.json decrypts the KV value using the Bearer token.
-   * So we can download the decrypted JSON, edit it, and then we need to
-   * encrypt it back before PUT /ai.json.enc.
-   *
-   * I should probably add an encryption utility in the UI that matches the worker's logic.
+   * @param encryptedVault - The Base64-encoded, AES-256-CBC encrypted vault content.
+   * @throws Error if the user is not authenticated or the upload fails.
    */
   async updateVault(encryptedVault: string): Promise<void> {
     const token = this.getToken();
@@ -165,12 +193,13 @@ export const ApiService = {
     }
   },
 
-  /**
-   * Fetch the current user's context information.
-   * @returns The user context object.
-   * @throws Error if unauthorized or fetch fails.
-   */
-  async fetchUserContext(): Promise<UserContext> {
+   /**
+    * Fetch the current user's context information.
+    *
+    * @returns A promise resolving to the user context object.
+    * @throws Error if no token is found or the request fails.
+    */
+   async fetchUserContext(): Promise<UserContext> {
     const token = this.getToken();
     if (!token) throw new Error('No authorization token found');
 
@@ -188,11 +217,16 @@ export const ApiService = {
     return await response.json() as UserContext;
   },
 
-  /**
-   * Generic authenticated JSON request against the Worker.
-   * Throws with the server-provided message on non-2xx responses.
-   */
-  async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+   /**
+    * Generic authenticated JSON request against the Worker.
+    * Throws with the server-provided message on non-2xx responses.
+    *
+    * @param path - The URL path relative to `VAULT_URL` (e.g. `"/v1/groups"`).
+    * @param init - Optional `RequestInit` overrides (method, headers, body).
+    * @returns A promise resolving to the parsed response body of type `T`.
+    * @throws Error if no token is found or the response is not OK.
+    */
+   async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const token = this.getToken();
     if (!token) throw new Error('No authorization token found');
 
@@ -212,21 +246,27 @@ export const ApiService = {
     return body;
   },
 
-  /**
-   * Admin-only: test every non-expired, non-quota-flagged "mistral" key with
-   * a free `GET /v1/models` call and flag any that return 401 as quota-
-   * exhausted until the next reset. Persists directly server-side — the
-   * caller should reload the config afterward to see the updated flags.
-   */
-   async testMistralKeys(force: boolean = true): Promise<{ tested: number; nowExhausted: string[]; healthy: string[] }> {
+   /**
+    * Admin-only: test every non-expired, non-quota-flagged "mistral" key with
+    * a free `GET /v1/models` call and flag any that return 401 as quota-
+    * exhausted until the next reset. Persists directly server-side — the
+    * caller should reload the config afterward to see the updated flags.
+    *
+    * @param force - When true, re-tests all keys even if recently checked.
+    * @returns An object with the count of tested keys and arrays of exhausted and healthy key owners.
+    */
+    async testMistralKeys(force: boolean = true): Promise<{ tested: number; nowExhausted: string[]; healthy: string[] }> {
     return this.request('/v1/keypool/mistral/healthcheck' + (force ? '?force=true' : ''), { method: 'POST' });
    },
 
-  /**
-   * Recorded quota-exhaustion observations (usage-until-exhaustion samples),
-   * most recent first. Optionally filtered by provider (e.g. "mistral").
-   */
-  async getQuotaObservations(provider?: string): Promise<QuotaObservation[]> {
+   /**
+    * Recorded quota-exhaustion observations (usage-until-exhaustion samples),
+    * most recent first. Optionally filtered by provider (e.g. "mistral").
+    *
+    * @param provider - Optional provider name to filter observations by.
+    * @returns An array of quota observation records.
+    */
+   async getQuotaObservations(provider?: string): Promise<QuotaObservation[]> {
     const query = provider ? `?provider=${encodeURIComponent(provider)}` : '';
     const body = await this.request<{ data: QuotaObservation[] }>(`/v1/keypool/quota-observations${query}`);
     return body.data;
@@ -234,13 +274,23 @@ export const ApiService = {
 
   // ── Group administration ─────────────────────────────────────────
 
-  /** List the groups visible to the caller. */
+  /**
+   * Lists the groups visible to the caller.
+   *
+   * @returns An array of group summaries.
+   */
   async listGroups(): Promise<GroupSummary[]> {
     const body = await this.request<{ data: GroupSummary[] }>('/v1/groups');
     return body.data;
   },
 
-  /** Create a group (superadmin only). */
+  /**
+   * Creates a new group (superadmin only).
+   *
+   * @param name - The human-readable group name.
+   * @param id - Optional explicit group ID; a random UUID is generated if omitted.
+   * @returns An object with the new group ID and a flag indicating whether a BYOK key was used.
+   */
   async createGroup(name: string, id?: string): Promise<{ id: string; seededFromByok: boolean }> {
     return this.request('/v1/groups', {
       method: 'POST',
@@ -248,14 +298,26 @@ export const ApiService = {
     });
   },
 
-  /** Delete a group; force also removes its members (superadmin only). */
+  /**
+   * Deletes a group (superadmin only). When `force` is true, also removes
+   * all members from the group before deletion.
+   *
+   * @param groupId - The ID of the group to delete.
+   * @param force - When true, also removes all members from the group.
+   * @returns An object listing the usernames that were removed.
+   */
   async deleteGroup(groupId: string, force = false): Promise<{ deletedUsers: string[] }> {
     return this.request(`/v1/groups/${encodeURIComponent(groupId)}${force ? '?force=true' : ''}`, {
       method: 'DELETE',
     });
   },
 
-  /** List the members of a group. */
+  /**
+   * Lists all members of a group.
+   *
+   * @param groupId - The ID of the group whose members to list.
+   * @returns An array of group member summaries.
+   */
   async listGroupUsers(groupId: string): Promise<GroupMember[]> {
     const body = await this.request<{ data: GroupMember[] }>(
       `/v1/groups/${encodeURIComponent(groupId)}/users`,
@@ -263,7 +325,15 @@ export const ApiService = {
     return body.data;
   },
 
-  /** Create a group member. Returns the generated API key (shown once). */
+  /**
+   * Creates a new member in a group. Returns the generated API key (shown once).
+   *
+   * @param groupId - The ID of the group to add the member to.
+   * @param username - The username for the new member.
+   * @param role - The member's role (`'admin'` or `'user'`).
+   * @param key - Optional explicit API key; a random key is generated if omitted.
+   * @returns An object with the username, role, and generated key.
+   */
   async createGroupUser(
     groupId: string,
     username: string,
@@ -276,7 +346,14 @@ export const ApiService = {
     });
   },
 
-  /** Update a member (role change or key regeneration). */
+  /**
+   * Updates a group member's role or regenerates their API key.
+   *
+   * @param groupId - The ID of the group containing the member.
+   * @param username - The username of the member to update.
+   * @param update - Partial update object with optional `role` and `regenerateKey` fields.
+   * @returns An object with the updated username, role, and new key (if regenerated).
+   */
   async updateGroupUser(
     groupId: string,
     username: string,
@@ -288,7 +365,13 @@ export const ApiService = {
     );
   },
 
-  /** Remove a member from a group. */
+  /**
+   * Removes a member from a group.
+   *
+   * @param groupId - The ID of the group containing the member.
+   * @param username - The username of the member to remove.
+   * @returns A promise that resolves when the member has been removed.
+   */
   async deleteGroupUser(groupId: string, username: string): Promise<void> {
     await this.request(
       `/v1/groups/${encodeURIComponent(groupId)}/users/${encodeURIComponent(username)}`,
@@ -298,7 +381,12 @@ export const ApiService = {
 
   /**
    * Send a chat completion request through the Worker for a specific provider.
-   * The optional provider-key headers are consumed by playground-compatible setups.
+   *
+   * @param providerId - The vault provider key (e.g. `"openai"`) used to build the request URL.
+   * @param payload - The JSON request body, typically an OpenAI-compatible chat completion payload.
+   * @param options - Optional provider-key routing and authentication headers.
+   * @returns The parsed provider response (JSON object or raw text for non-JSON responses).
+   * @throws Error if the user is not authenticated, the network fails, or the provider returns a non-2xx status.
    */
   async createChatCompletion(
     providerId: string,

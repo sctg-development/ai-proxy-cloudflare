@@ -37,6 +37,9 @@ import type {
  * Ensures the provider endpoint resolves to the chat completions path.
  * Handles endpoints that already end with `/chat/completions`, endpoints
  * ending with a versioned segment like `/v1` or `/v1beta`, and plain base URLs.
+ *
+ * @param provider - The provider configuration containing the endpoint.
+ * @returns The full chat completions URL.
  */
 export const buildDirectChatUrl = (provider: AiProvider): string => {
   const base = provider.endpoint.replace(/\/+$/, '');
@@ -47,6 +50,9 @@ export const buildDirectChatUrl = (provider: AiProvider): string => {
 
 /**
  * Ensures the provider endpoint resolves to the OpenAI-compatible speech path.
+ *
+ * @param provider - The provider configuration containing the endpoint.
+ * @returns The full audio speech URL.
  */
 export const buildDirectSpeechUrl = (provider: AiProvider): string => {
   const base = provider.endpoint.replace(/\/+$/, '');
@@ -62,6 +68,9 @@ export const buildDirectSpeechUrl = (provider: AiProvider): string => {
 /**
  * Converts playground parts to a text-only string.
  * Used as a safe fallback for providers that do not support multimodal content.
+ *
+ * @param parts - The playground parts to convert.
+ * @returns A single string combining all parts' text representations.
  */
 export const playgroundPartsToText = (parts: PlaygroundPart[]): string =>
   parts
@@ -80,6 +89,9 @@ export const playgroundPartsToText = (parts: PlaygroundPart[]): string =>
 /**
  * Converts playground parts to the OpenAI multimodal content array format.
  * Falls back to a plain text string when there is only one text part.
+ *
+ * @param parts - The playground parts to convert.
+ * @returns A string (single text part) or an array of content objects.
  */
 export const playgroundPartsToOpenAiContent = (
   parts: PlaygroundPart[],
@@ -134,26 +146,45 @@ export const playgroundPartsToOpenAiContent = (
 // Payload builder
 // ---------------------------------------------------------------------------
 
+/**
+ * Options for building a playground chat completions payload.
+ */
 export interface BuildPlaygroundPayloadOptions {
+  /** The model ID to send the request to. */
   modelId: string;
+  /** System prompt prepended to the conversation. */
   systemPrompt: string;
+  /** The conversation messages to include in the payload. */
   messages: PlaygroundMessage[];
+  /** Sampling temperature. */
   temperature: number;
+  /** Maximum output tokens to generate. */
   maxTokens: number;
+  /** Nucleus sampling parameter (0–1). */
   topP: number;
+  /** Whether to stream the response. */
   stream: boolean;
   /** When true, uses multimodal content parts for image/audio. Default: true. */
   multimodal?: boolean;
 }
 
+/**
+ * Options for building a playground text-to-speech payload.
+ */
 export interface BuildPlaygroundSpeechPayloadOptions {
+  /** The provider configuration (used for protocol-specific voice selection). */
   provider: AiProvider;
+  /** The TTS model ID. */
   modelId: string;
+  /** The conversation messages (only the latest user message is used as input). */
   messages: PlaygroundMessage[];
 }
 
 /**
  * Builds the OpenAI-compatible JSON body for a chat completions request.
+ *
+ * @param options - The payload options including model, messages, and sampling parameters.
+ * @returns A serialized chat completion request body.
  */
 export const buildPlaygroundPayload = ({
   modelId,
@@ -193,6 +224,14 @@ export const buildPlaygroundPayload = ({
   };
 };
 
+/**
+ * Resolves a default speech voice for TTS requests based on the provider and model.
+ * Currently only Orpheus models on OpenAI use a non-default voice (`'autumn'`).
+ *
+ * @param provider - The provider configuration (for protocol detection).
+ * @param modelId - The TTS model ID.
+ * @returns The voice identifier to use in the TTS request.
+ */
 const resolveDefaultSpeechVoice = (provider: AiProvider, modelId: string): string => {
   const lowerModelId = modelId.toLowerCase();
 
@@ -203,6 +242,12 @@ const resolveDefaultSpeechVoice = (provider: AiProvider, modelId: string): strin
   return 'alloy';
 };
 
+/**
+ * Builds the text-to-speech request payload using the latest user message as input.
+ *
+ * @param options - The speech payload options (provider, model ID, messages).
+ * @returns A serialized TTS request body with model, input, voice, and format.
+ */
 export const buildPlaygroundSpeechPayload = ({
   provider,
   modelId,
@@ -226,7 +271,12 @@ export const buildPlaygroundSpeechPayload = ({
 /** Rough 1-token-per-4-chars estimate — good enough for the context usage bar. */
 export const estimateTokens = (text: string): number => Math.ceil(text.length / 4);
 
-/** Returns the representative text of a part for token estimation. */
+/**
+ * Returns the representative text of a part for token estimation purposes.
+ *
+ * @param part - A playground part to extract text from.
+ * @returns The text content, or a placeholder for non-textual parts.
+ */
 export const getPartTokenText = (part: PlaygroundPart): string => {
   if (part.type === 'text') return part.text;
   if (part.type === 'audio' && part.transcription) return part.transcription;
@@ -235,7 +285,12 @@ export const getPartTokenText = (part: PlaygroundPart): string => {
   return `[Attached ${part.type}]`;
 };
 
-/** Returns the combined token-estimation text for a whole message. */
+/**
+ * Returns the combined token-estimation text for a whole message.
+ *
+ * @param message - A playground message whose parts should be combined.
+ * @returns A concatenated string of all part texts.
+ */
 export const getMessageTokenText = (message: PlaygroundMessage): string =>
   message.parts.map(getPartTokenText).join('\n\n');
 
@@ -246,6 +301,9 @@ export const getMessageTokenText = (message: PlaygroundMessage): string =>
 /**
  * Parses raw SSE text produced by a streaming response into the accumulated
  * assistant text.
+ *
+ * @param rawStream - The raw response body text containing SSE `data:` lines.
+ * @returns The concatenated assistant text, trimmed.
  */
 export const extractStreamedAssistantText = (rawStream: string): string => {
   const fragments: string[] = [];
@@ -274,6 +332,9 @@ export const extractStreamedAssistantText = (rawStream: string): string => {
 
 /**
  * Extracts the assistant text from a standard JSON response body.
+ *
+ * @param responseBody - The parsed provider response (object or string).
+ * @returns The extracted text, or a JSON stringified fallback.
  */
 export const extractAssistantText = (responseBody: unknown): string => {
   if (typeof responseBody === 'string') return responseBody;
@@ -298,11 +359,26 @@ export const extractAssistantText = (responseBody: unknown): string => {
   return JSON.stringify(responseBody, null, 2);
 };
 
+/**
+ * Normalizes an audio MIME type value into a valid `audio/*` type.
+ * Returns `'audio/wav'` for empty or invalid input.
+ *
+ * @param value - The raw MIME type string from the provider response.
+ * @returns A normalized audio MIME type.
+ */
 const normalizeAudioMimeType = (value: unknown): string => {
   if (typeof value !== 'string' || value.trim().length === 0) return 'audio/wav';
   return value.includes('/') ? value : `audio/${value}`;
 };
 
+/**
+ * Extracts a TTS audio part from a provider response body's `choices[0].message`.
+ * Handles both direct `message.audio` fields and `message.content` arrays
+ * containing audio content items.
+ *
+ * @param responseBody - The raw provider response body.
+ * @returns A `PlaygroundTtsAudioPart` if audio is found, otherwise `null`.
+ */
 const audioPartFromChoiceMessage = (responseBody: unknown): PlaygroundTtsAudioPart | null => {
   if (!responseBody || typeof responseBody !== 'object') return null;
 
@@ -402,6 +478,9 @@ const audioPartFromChoiceMessage = (responseBody: unknown): PlaygroundTtsAudioPa
 /**
  * Converts a provider response body into playground parts.
  * Prefers model-generated audio when present, and preserves assistant text when available.
+ *
+ * @param responseBody - The parsed provider response.
+ * @returns An array of `PlaygroundPart` (text and/or TTS audio parts).
  */
 export const extractAssistantParts = (responseBody: unknown): PlaygroundPart[] => {
   const parts: PlaygroundPart[] = [];

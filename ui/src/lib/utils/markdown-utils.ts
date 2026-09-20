@@ -23,6 +23,11 @@ import { Marked } from 'marked';
 import { markedHighlight } from 'marked-highlight';
 import highlightJs from 'highlight.js';
 
+/**
+ * Creates and configures a Marked renderer with syntax highlighting via highlight.js.
+ *
+ * @returns A configured `Marked` instance ready to parse Markdown into HTML.
+ */
 export const createMarkedRenderer = () => new Marked(
   markedHighlight({
     emptyLangClass: 'hljs',
@@ -34,6 +39,15 @@ export const createMarkedRenderer = () => new Marked(
   }),
 );
 
+/**
+ * Sanitizes rendered HTML by removing dangerous elements and attributes.
+ * Strips `<script>`, `<style>`, `<iframe>`, `<object>`, `<embed>`, and `<link>`
+ * tags, and removes event handler attributes (`on*`) as well as
+ * `javascript:`, `data:`, and `vbscript:` URL schemes.
+ *
+ * @param html - The raw HTML string to sanitize.
+ * @returns The sanitized HTML string safe for `dangerouslySetInnerHTML`.
+ */
 export const sanitizeRenderedHtml = (html: string): string => {
   if (typeof window === 'undefined') return html;
 
@@ -52,6 +66,13 @@ export const sanitizeRenderedHtml = (html: string): string => {
   return document.body.innerHTML;
 };
 
+/**
+ * Renders a Markdown string to sanitized HTML.
+ *
+ * @param content - The Markdown source text to render.
+ * @param markedRenderer - A pre-configured `Marked` instance (from `createMarkedRenderer`).
+ * @returns Sanitized HTML string safe for React's `dangerouslySetInnerHTML`.
+ */
 export const renderMarkdown = (content: string, markedRenderer: Marked): string => {
   const rendered = markedRenderer.parse(content);
   return sanitizeRenderedHtml(typeof rendered === 'string' ? rendered : content);

@@ -37,16 +37,29 @@ import {
   extractMistralConversationsParts,
 } from '../lib/playground/mistral-conversations';
 
+/**
+ * Options required to send a single playground request.
+ */
 export interface SendPlaygroundRequestOptions {
+  /** The provider configuration (endpoint, protocol, keys). */
   provider: AiProvider;
+  /** The API key used to authenticate the request. */
   providerKey: string;
+  /** The model ID to send the request to. */
   modelId: string;
+  /** System prompt prepended to the conversation. */
   systemPrompt: string;
+  /** The conversation messages to send. */
   messages: PlaygroundMessage[];
+  /** Optional override for the model's usage type (e.g. `'tts'`). */
   modelUsage?: AiModel['usage'];
+  /** Sampling temperature (0–2 range). */
   temperature: number;
+  /** Maximum number of output tokens to generate. */
   maxTokens: number;
+  /** Nucleus sampling parameter (0–1 range). */
   topP: number;
+  /** Whether to stream the response via SSE. */
   stream: boolean;
   /**
    * When true and the provider is Mistral, routes through /v1/conversations
@@ -55,15 +68,30 @@ export interface SendPlaygroundRequestOptions {
   enableImageGeneration?: boolean;
 }
 
+/**
+ * State returned by the `usePlaygroundRequest` hook.
+ */
 export interface PlaygroundRequestState {
+  /** Whether a request is currently in flight. */
   isSending: boolean;
+  /** Error message from the last failed request, or `null` if no error. */
   error: string | null;
+  /** Sends a playground request and resolves with the returned parts. */
   sendRequest: (options: SendPlaygroundRequestOptions) => Promise<PlaygroundPart[]>;
+  /** Aborts the current in-flight request and resets the sending state. */
   cancelRequest: () => void;
+  /** Clears the current error message. */
   clearError: () => void;
+  /** Manually sets an error message. */
   setError: (message: string) => void;
 }
 
+/**
+ * Checks whether a content-type header indicates an audio response.
+ *
+ * @param contentType - The raw content-type header value, or `null`.
+ * @returns True if the content type is audio or a binary stream.
+ */
 const isAudioContentType = (contentType: string | null): boolean => {
   if (!contentType) return false;
 
@@ -72,6 +100,13 @@ const isAudioContentType = (contentType: string | null): boolean => {
     || normalized.includes('application/octet-stream');
 };
 
+/**
+ * Extracts the filename from a `Content-Disposition` HTTP header.
+ * Supports both UTF-8 encoded filenames (`filename*=UTF-8''...`) and standard quoted filenames.
+ *
+ * @param contentDisposition - The raw `Content-Disposition` header value, or `null`.
+ * @returns The extracted filename, or `undefined` if not present.
+ */
 const extractFilenameFromContentDisposition = (contentDisposition: string | null): string | undefined => {
   if (!contentDisposition) return undefined;
 
@@ -91,6 +126,12 @@ const extractFilenameFromContentDisposition = (contentDisposition: string | null
   return plainMatch?.[1]?.trim();
 };
 
+/**
+ * Converts an ArrayBuffer to a Base64-encoded string.
+ *
+ * @param buffer - The raw ArrayBuffer to encode.
+ * @returns A Base64 string representation of the buffer.
+ */
 const arrayBufferToBase64 = (buffer: ArrayBuffer): string => {
   const bytes = new Uint8Array(buffer);
   let binary = '';
@@ -105,21 +146,36 @@ const arrayBufferToBase64 = (buffer: ArrayBuffer): string => {
 /**
  * Handles the HTTP request lifecycle for a single playground send action.
  * Exposes an AbortController-backed cancel method and streaming SSE parsing.
+ *
+ * The hook manages:
+ *  - AbortController creation and cleanup for request cancellation.
+ *  - Loading state management (`isSending`).
+ *  - Error capture and clearing.
+ *  - Three response paths: Mistral conversations (image generation), TTS (binary audio),
+ *    and standard streaming JSON chat completions.
+ *
+ * @returns The current request state, including `sendRequest`, `cancelRequest`,
+ *          `clearError`, and `setError` actions.
  */
 export const usePlaygroundRequest = (): PlaygroundRequestState => {
   const [isSending, setIsSending] = useState(false);
   const [error, setErrorState] = useState<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
+  /** Aborts the current request and resets the sending state. */
   const cancelRequest = useCallback(() => {
     abortControllerRef.current?.abort();
     abortControllerRef.current = null;
     setIsSending(false);
   }, []);
 
+  /** Clears the error state by setting it to `null`. */
   const clearError = useCallback(() => setErrorState(null), []);
+
+  /** Manually sets an error message in state. */
   const setError = useCallback((message: string) => setErrorState(message), []);
 
+  /** Sends a playground request, handling streaming, TTS, and Mistral conversations paths. */
   const sendRequest = useCallback(
     async (options: SendPlaygroundRequestOptions): Promise<PlaygroundPart[]> => {
       const {

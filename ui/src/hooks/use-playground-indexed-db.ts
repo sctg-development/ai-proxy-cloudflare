@@ -11,22 +11,36 @@ import {
   saveStoredConversation,
 } from '../lib/playground/indexed-db';
 
+/**
+ * Options passed to the {@link usePlaygroundIndexedDb} hook.
+ */
 export interface UsePlaygroundIndexedDbOptions {
+  /** The UUID of the conversation to load and persist. */
   conversationId: string;
+  /** The current messages in the active conversation. */
   messages: PlaygroundMessage[];
+  /** Initial message history to use if no stored conversation is found. */
   initialHistory?: PlaygroundMessage[];
+  /** Callback invoked with stored messages once the conversation is loaded. */
   onMessagesLoaded: (messages: PlaygroundMessage[]) => void;
 }
 
+/**
+ * State returned by the {@link usePlaygroundIndexedDb} hook.
+ */
 export interface PlaygroundIndexedDbState {
   /** All stored conversations, sorted by updatedAt descending. */
   conversations: PlaygroundConversation[];
+  /** Deletes a conversation from IndexedDB by its ID. */
   deleteConversation: (id: string) => Promise<void>;
 }
 
 /**
  * Persists the active conversation to IndexedDB with a 500 ms debounce.
  * Also maintains a sorted list of all conversations for the history sidebar.
+ *
+ * @param options - Configuration including conversation ID, messages, and callbacks.
+ * @returns The current conversation list and a `deleteConversation` helper.
  */
 export const usePlaygroundIndexedDb = ({
   conversationId,
@@ -38,6 +52,7 @@ export const usePlaygroundIndexedDb = ({
   // true while the initial load for the current conversationId is in flight
   const loadingRef = useRef(true);
 
+  /** Re-fetches all stored conversations from IndexedDB and sorts them by recency. */
   const refreshConversations = useCallback(async () => {
     try {
       const all = await getAllStoredConversations();
@@ -112,6 +127,7 @@ export const usePlaygroundIndexedDb = ({
     return () => window.clearTimeout(timeout);
   }, [conversationId, messages, refreshConversations]);
 
+  /** Deletes a conversation from IndexedDB and refreshes the sidebar list. */
   const deleteConversation = useCallback(
     async (id: string) => {
       try {

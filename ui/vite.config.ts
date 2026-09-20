@@ -22,11 +22,20 @@ import tailwindcss from '@tailwindcss/vite';
 import { sctgChatbotWorkerAssets } from '@sctg/cline-chatbot/vite-plugin'
 
 // https://vitejs.dev/config/
+/**
+ * Vite configuration for the ai-proxy Cloudflare UI.
+ *
+ * Defines build-time environment variables (`VAULT_URL`, `EXA_FREE_TIER_GRANT`),
+ * registers plugins (React, Tailwind CSS, and a custom Cloudflare worker-assets copier),
+ * and configures the dev server on port 3000.
+ */
 export default defineConfig({
+  /** Build-time environment variable definitions injected into `import.meta.env`. */
   define: {
     'import.meta.env.VAULT_URL': JSON.stringify(process.env.VAULT_URL || 'https://ai-proxy.inet.pp.ua'),
     'import.meta.env.EXA_FREE_TIER_GRANT': JSON.stringify(parseInt(process.env.EXA_FREE_TIER_GRANT || '10') || 10),
   },
+  /** Vite plugins applied to the build. */
   plugins: [
     // React plugin enables JSX transform and Fast Refresh in development
     react(),
@@ -40,9 +49,11 @@ export default defineConfig({
     // 404 once deployed even though `vite`/dev mode works fine without it.
     sctgChatbotWorkerAssets(),
   ],
+  /** Dependencies to pre-bundle on dev server start. */
   optimizeDeps: {
      include: ['react', 'react-dom'],
   },
+  /** Development server configuration. */
   server: {
     port: 3000,
   },

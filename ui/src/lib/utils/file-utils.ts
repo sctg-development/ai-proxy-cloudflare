@@ -22,14 +22,27 @@
 import type { PlaygroundFile } from '../../types/playground-types';
 import type { AiConfig, AiProtocol, CrawlerProtocol } from '../../types/ai-config';
 
+/** Maximum size for inline base64 file payloads (8 MB). */
 export const MAX_CONTEXT_FILE_BYTES = 256 * 1024;
 
+/**
+ * Formats a byte count into a human-readable string with the appropriate unit (B, KB, MB).
+ *
+ * @param bytes - The number of bytes to format.
+ * @returns A formatted string like `"1.5 MB"` or `"512 B"`.
+ */
 export const formatBytes = (bytes: number): string => {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
+/**
+ * Maps a language name to its file extension.
+ *
+ * @param language - The language identifier (case-insensitive, e.g. `"markdown"`, `"python"`).
+ * @returns The file extension (e.g. `"md"`, `"py"`), or `"txt"` if unknown.
+ */
 export const getFileExtension = (language: string): string => ({
   bash: 'sh',
   c: 'c',
@@ -52,6 +65,13 @@ export const getFileExtension = (language: string): string => ({
   yml: 'yml',
 }[language.toLowerCase()] ?? 'txt');
 
+/**
+ * Generates a unique filename by appending a numeric suffix if the name is already taken.
+ *
+ * @param filename - The original filename.
+ * @param usedNames - A Set of filenames already used in this context.
+ * @returns A unique filename, modifying `usedNames` as a side effect.
+ */
 export const makeUniqueFilename = (filename: string, usedNames: Set<string>): string => {
   if (!usedNames.has(filename)) {
     usedNames.add(filename);
@@ -73,6 +93,14 @@ export const makeUniqueFilename = (filename: string, usedNames: Set<string>): st
   return candidate;
 };
 
+/**
+ * Generates a Markdown filename from the first heading of the content,
+ * or falls back to `"assistant-response-N.md"`.
+ *
+ * @param content - The Markdown source text.
+ * @param index - Zero-based index used for the fallback name.
+ * @returns A slugified filename ending in `.md`.
+ */
 export const getMarkdownFilename = (content: string, index: number): string => {
   const heading = content.match(/^#\s+(.+)$/m)?.[1]
     ?.trim()
@@ -82,6 +110,13 @@ export const getMarkdownFilename = (content: string, index: number): string => {
   return `${heading || `assistant-response-${index + 1}`}.md`;
 };
 
+/**
+ * Builds a user-content string that combines the prompt text with attached context files.
+ *
+ * @param prompt - The main user prompt text.
+ * @param files - Optional array of legacy file objects to include as context.
+ * @returns A combined string with the prompt and XML-wrapped file contents.
+ */
 export const buildUserContent = (prompt: string, files: PlaygroundFile[] = []): string => {
   if (files.length === 0) return prompt;
 
@@ -101,9 +136,23 @@ export const buildUserContent = (prompt: string, files: PlaygroundFile[] = []): 
   ].join('\n');
 };
 
+/**
+ * Extracts the representative text from a legacy message object for token estimation.
+ *
+ * @param message - A message with `content` text and optional `files`.
+ * @returns The combined text including file contexts, or just the content.
+ */
 export const messageTokenText = (message: { content: string; files?: PlaygroundFile[] }): string =>
   buildUserContent(message.content, message.files);
 
+/**
+ * Extracts fenced code blocks from text content and converts them into file objects.
+ * Each fenced block with a `filename=` or `path=` annotation becomes a named file;
+ * otherwise a generic name like `"generated-1.ts"` is used.
+ *
+ * @param content - The text containing fenced code blocks.
+ * @returns An array of `{ name, content }` file objects.
+ */
 export const extractGeneratedFiles = (content: string) => {
   const files: Array<{ name: string; content: string }> = [];
   const usedNames = new Set<string>();

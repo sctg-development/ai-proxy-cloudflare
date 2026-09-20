@@ -160,8 +160,11 @@ export interface WeatherApiProtocol {
  * Represents a Weather API configuration.
  */
 export interface WeatherApi { 
+  /** The weather API protocol descriptor. */
   protocol: WeatherApiProtocol;
+  /** Base API endpoint for the weather service. */
   endpoint: string;
+  /** API keys used to authenticate against the weather service. */
   keys: AiKey[];
 }
 

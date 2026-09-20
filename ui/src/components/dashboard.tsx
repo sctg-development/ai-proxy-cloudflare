@@ -20,6 +20,8 @@
  * Providers, their models and their API keys are all managed from here.
  * Changes are edited as a local draft first. The encrypted Worker vault is only
  * updated when the user explicitly presses the save button.
+ *
+ * @module dashboard
  */
 
 import React, { useEffect, useState } from 'react';
@@ -770,11 +772,16 @@ export const Dashboard: React.FC = () => {
           }),
           modelId: testModel.id,
         };
+      case 'cohere':
+          url = `${endpoint}/chat`;
+          authHeaderName = 'Authorization';
+          authHeaderValue = `Bearer ${apiKey.key}`;
+          break;
       default:
-        url = `${endpoint}/chat/completions`;
-        authHeaderName = 'Authorization';
-        authHeaderValue = `Bearer ${apiKey.key}`;
-        break;
+          url = `${endpoint}/chat/completions`;
+          authHeaderName = 'Authorization';
+          authHeaderValue = `Bearer ${apiKey.key}`;
+          break;
     }
 
     return { url, authHeaderName, authHeaderValue, headers, body, modelId: testModel.id };

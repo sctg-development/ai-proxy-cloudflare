@@ -25,13 +25,23 @@ import type {
 } from '../types/playground-types';
 import { revokePartObjectUrls } from '../lib/playground/multimodal-files';
 
+/**
+ * State returned by the {@link usePlaygroundConversation} hook.
+ */
 export interface PlaygroundConversationState {
+  /** The full conversation history. */
   messages: PlaygroundMessage[];
+  /** Current text input value in the composer. */
   inputText: string;
+  /** Current non-text parts (images, files, etc.) in the composer. */
   inputParts: PlaygroundPart[];
+  /** Index to resume from for regeneration, or `null` to append normally. */
   resumeFromIndex: number | null;
+  /** Setter for the text input value. */
   setInputText: React.Dispatch<React.SetStateAction<string>>;
+  /** Setter for the input parts. */
   setInputParts: React.Dispatch<React.SetStateAction<PlaygroundPart[]>>;
+  /** Setter for the resume-from index. */
   setResumeFromIndex: React.Dispatch<React.SetStateAction<number | null>>;
   /** Returns the history to use as context (honoring resumeFromIndex). */
   getBaseMessages: () => PlaygroundMessage[];
@@ -49,6 +59,10 @@ export interface PlaygroundConversationState {
 
 /**
  * Manages the conversation history and the current draft (text + attachments).
+ * Provides helpers for building user messages, replacing conversations,
+ * appending assistant responses, and cleaning up Object URLs on unmount.
+ *
+ * @returns The conversation state and a set of action callbacks.
  */
 export const usePlaygroundConversation = (): PlaygroundConversationState => {
   const [messages, setMessages] = useState<PlaygroundMessage[]>([]);
@@ -56,11 +70,13 @@ export const usePlaygroundConversation = (): PlaygroundConversationState => {
   const [inputParts, setInputParts] = useState<PlaygroundPart[]>([]);
   const [resumeFromIndex, setResumeFromIndex] = useState<number | null>(null);
 
+  /** Returns the messages to send as context, honoring `resumeFromIndex` for regeneration. */
   const getBaseMessages = useCallback((): PlaygroundMessage[] => {
     if (resumeFromIndex === null) return messages;
     return messages.slice(0, resumeFromIndex + 1);
   }, [messages, resumeFromIndex]);
 
+  /** Constructs a new user message from the draft text, transcription parts, and attachments. */
   const createNextUserMessage = useCallback((): PlaygroundMessage | null => {
     const textPart: PlaygroundTextPart | null = inputText.trim()
       ? { type: 'text', text: inputText.trim() }
@@ -91,10 +107,12 @@ export const usePlaygroundConversation = (): PlaygroundConversationState => {
     };
   }, [inputText, inputParts]);
 
+  /** Replaces the entire conversation with a new message array. */
   const replaceMessages = useCallback((next: PlaygroundMessage[]) => {
     setMessages(next);
   }, []);
 
+  /** Appends a new assistant message (with the given parts) after the provided history. */
   const appendAssistantMessage = useCallback(
     (nextMessages: PlaygroundMessage[], parts: PlaygroundPart[]) => {
       setMessages([
@@ -111,6 +129,7 @@ export const usePlaygroundConversation = (): PlaygroundConversationState => {
     [],
   );
 
+  /** Clears the text input and all attachment parts, revoking any Object URLs. */
   const clearDraft = useCallback(() => {
     setInputText('');
     setInputParts((current) => {
@@ -119,6 +138,7 @@ export const usePlaygroundConversation = (): PlaygroundConversationState => {
     });
   }, []);
 
+  /** Clears all messages and the draft, revoking Object URLs for every part. */
   const clearConversation = useCallback(() => {
     setMessages((current) => {
       current.forEach((msg) => msg.parts.forEach(revokePartObjectUrls));
