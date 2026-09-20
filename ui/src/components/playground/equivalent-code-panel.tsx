@@ -8,9 +8,13 @@ import type { AiProvider } from '../../types/ai-config';
 import { maskApiKey } from '../../lib/provider-models';
 import { buildDirectChatUrl } from '../../lib/playground/payload';
 
+/** Props for {@link EquivalentCodePanel}. */
 export interface EquivalentCodePanelProps {
+  /** The active provider (used to build the default request URL). */
   provider?: AiProvider;
+  /** The API key used for authentication (displayed masked). */
   providerKey: string;
+  /** The request body to render in code snippets. */
   payload: unknown;
   /** Override the request URL (e.g. for Mistral /v1/conversations). Falls back to buildDirectChatUrl(provider). */
   url?: string;
@@ -74,6 +78,7 @@ export const EquivalentCodePanel: React.FC<EquivalentCodePanelProps> = ({
   const snippets: Record<SnippetLang, string> = { curl: curlSnippet, python: pythonSnippet, typescript: tsSnippet };
   const titles: Record<SnippetLang, string> = { curl: 'curl', python: 'python', typescript: 'typescript fetch' };
 
+  /** Copies the selected language snippet to the clipboard and shows a "Copied" indicator. */
   const copySnippet = async (lang: SnippetLang) => {
     try {
       await navigator.clipboard.writeText(snippets[lang]);

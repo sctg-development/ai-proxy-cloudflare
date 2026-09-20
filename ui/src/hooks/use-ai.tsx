@@ -24,14 +24,23 @@ import { encryptVault } from '../lib/crypto';
  * Interface for the AI Context.
  */
 interface AiContextType {
+  /** Current decrypted vault config, or null if not yet loaded. */
   config: AiConfig | null;
+  /** True while a vault fetch or save operation is in flight. */
   loading: boolean;
+  /** Last error message from a vault operation, or null. */
   error: string | null;
+  /** Whether the user has provided a valid token and can access the vault. */
   isAuthenticated: boolean;
+  /** User and role information fetched from the Worker. */
   userContext: UserContext | null;
+  /** Stores the token and fetches the vault config. */
   login: (token: string) => Promise<void>;
+  /** Clears the token and all vault state. */
   logout: () => void;
+  /** Re-fetches the encrypted vault and decrypts it with the stored token. */
   refresh: () => Promise<void>;
+  /** Encrypts and persists the given config to the Worker. */
   updateConfig: (newConfig: AiConfig) => Promise<void>;
 }
 
@@ -39,6 +48,9 @@ const AiContext = createContext<AiContextType | undefined>(undefined);
 
 /**
  * Provider component for AI configuration state.
+ *
+ * Wraps the application to provide vault config, auth state, and CRUD
+ * operations to all child components via React Context.
  */
 export const AiProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [config, setConfig] = useState<AiConfig | null>(null);
@@ -49,6 +61,10 @@ export const AiProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
   /**
    * Refreshes the configuration from the Worker.
+   *
+   * Fetches the encrypted vault, decrypts it with the stored token, and also
+   * loads the current user context. Falls back to legacy admin mode if the
+   * user-context endpoint is unavailable.
    */
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -78,6 +94,11 @@ export const AiProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
   /**
    * Logs in with a token.
+   *
+   * Stores the token in memory (sessionStorage via {@link ApiService}),
+   * marks the user as authenticated, and triggers an initial vault fetch.
+   *
+   * @param token - The Bearer auth token (also the AES-256-CBC vault password).
    */
   const login = async (token: string) => {
     ApiService.setToken(token);
@@ -87,6 +108,9 @@ export const AiProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
   /**
    * Logs out.
+   *
+   * Clears the stored token, marks the user as unauthenticated, and resets
+   * all vault state to null.
    */
   const logout = () => {
     ApiService.clearToken();
@@ -96,7 +120,9 @@ export const AiProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
   /**
    * Updates the configuration on the Worker.
-   * Encrypts the JSON before sending.
+   * Encrypts the JSON before sending via AES-256-CBC with the user's token.
+   *
+   * @param newConfig - The full updated config object to persist.
    */
   const updateConfig = async (newConfig: AiConfig) => {
     const token = ApiService.getToken();
@@ -131,6 +157,9 @@ export const AiProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
 /**
  * Hook to use the AI context.
+ *
+ * @returns The AI context value.
+ * @throws {Error} If used outside an {@link AiProvider}.
  */
 export const useAi = () => {
   const context = useContext(AiContext);

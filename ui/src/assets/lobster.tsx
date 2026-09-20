@@ -18,10 +18,20 @@
 
 import React from 'react';
 
+/** Props for {@link LobsterIcon}, the animated lobster SVG used in copy-to-clipboard buttons. */
 interface LobsterIconProps extends React.SVGProps<SVGSVGElement> {
+  /** Optional CSS class applied to the SVG root. */
   className?: string;
 }
 
+/**
+ * Animated lobster icon SVG.
+ *
+ * Renders an SVG with subtle floating and blinking animations.
+ * Used as the "copy to clipboard" visual in provider and crawler cards.
+ *
+ * @param props - Standard SVG element props plus optional `className`.
+ */
 export const LobsterIcon: React.FC<LobsterIconProps> = ({ className, ...props }) => (
   <svg
     viewBox="0 0 120 120"

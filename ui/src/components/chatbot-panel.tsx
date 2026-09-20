@@ -28,6 +28,13 @@ import '@sctg/cline-chatbot/style.css';
 /** Base URL of the vault/usage Worker (same host for both roles). */
 const WORKER_URL = import.meta.env.VAULT_URL as string;
 
+/**
+ * Embedded @sctg/cline-chatbot panel.
+ *
+ * Renders the official SCTG chatbot component, configured to use the same
+ * vault URL for both chat and usage data. The chatbot reuses the vault's
+ * session token, so an authenticated user lands directly in the conversation.
+ */
 export const ChatbotPanel: React.FC = () => {
   return (
     <div className="h-[calc(100vh-8rem)] overflow-hidden rounded-lg border border-default-200">

@@ -13,21 +13,33 @@ import {
 } from '../../lib/playground/multimodal-files';
 import { FilePreviewList } from './file-preview';
 
+/** Props for {@link MultimodalInput}. */
 export interface MultimodalInputProps {
+  /** Current text content of the textarea. */
   text: string;
+  /** Attached file parts to display as preview chips. */
   parts: PlaygroundPart[];
+  /** True while a chat request is streaming — disables inputs and shows the cancel button. */
   isSending: boolean;
   /** Supported input modalities from the active model — controls which files are accepted. */
   inputModalities?: AiModalityInput[];
+  /** Called when the user types or pastes text into the textarea. */
   onTextChange: (text: string) => void;
+  /** Called when files are attached or removed via the file preview list. */
   onPartsChange: (parts: PlaygroundPart[]) => void;
+  /** Called when the user presses Send (or Ctrl+Enter). */
   onSend: () => void;
+  /** Called when the user presses Cancel during a streaming response. */
   onCancel?: () => void;
+  /** Called with an error message when file processing fails (e.g. oversized, unreadable). */
   onError?: (message: string) => void;
+  /** Optional transcription provider for auto-converting audio uploads to text. */
   transcriber?: PlaygroundTranscriber;
+  /** Disables all inputs when no provider or model is selected. */
   isDisabled?: boolean;
 }
 
+/** Maps each supported input modality to an HTML `accept` attribute value for the file input. */
 const MODALITY_ACCEPT_MAP: Record<AiModalityInput, string> = {
   text: '.txt,.md,.csv,.json,.xml,.yaml,.yml,.toml,.ts,.tsx,.js,.jsx,.py,.rs,.go,.rb,.java,.c,.cpp,.h,.cs,.php,.sh',
   image: 'image/*',
@@ -35,7 +47,13 @@ const MODALITY_ACCEPT_MAP: Record<AiModalityInput, string> = {
   video: 'video/*',
 };
 
-/** Text input with drag-and-drop file attachment support and a send/cancel button. */
+/**
+ * Text input with drag-and-drop file attachment support and a send/cancel button.
+ *
+ * Accepts files based on the active model's input modalities, auto-transcribes
+ * audio uploads (when a `transcriber` is provided), and renders file preview
+ * chips below the textarea. Supports Ctrl+Enter to send.
+ */
 export const MultimodalInput: React.FC<MultimodalInputProps> = ({
   text,
   parts,
@@ -56,6 +74,7 @@ export const MultimodalInput: React.FC<MultimodalInputProps> = ({
     .filter(Boolean)
     .join(',');
 
+  /** Processes a FileList or File[]: filters oversized files, creates parts, and transcribes audio. */
   const addFiles = async (files: FileList | File[]) => {
     const nextParts: PlaygroundPart[] = [];
 
@@ -94,12 +113,14 @@ export const MultimodalInput: React.FC<MultimodalInputProps> = ({
     if (nextParts.length > 0) onPartsChange([...parts, ...nextParts]);
   };
 
+  /** Handles file drop events on the input container area. */
   const handleDrop = async (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     if (event.dataTransfer.files.length === 0) return;
     await addFiles(event.dataTransfer.files);
   };
 
+  /** Sends the prompt when Ctrl+Enter (or Cmd+Enter on Mac) is pressed. */
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
       event.preventDefault();

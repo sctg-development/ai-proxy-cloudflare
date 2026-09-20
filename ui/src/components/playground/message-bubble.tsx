@@ -14,9 +14,13 @@ import { extractGeneratedFiles, getMarkdownFilename } from '../../lib/utils/file
 import { formatBytes } from '../../lib/playground/multimodal-files';
 import { CodeBlock } from './code-block';
 import { ImageModal } from './image-modal';
+/** Props for {@link MessageBubble}. */
 interface MessageBubbleProps {
+  /** The message to render. */
   message: PlaygroundMessage;
+  /** Zero-based index of this message in the conversation (used for filenames/key generation). */
   index: number;
+  /** Opens the resume-from-here UI at this message's index. */
   onResume: () => void;
   /** When provided, a Retry button appears on assistant error messages. */
   onRetry?: () => void;
@@ -24,6 +28,7 @@ interface MessageBubbleProps {
   onRotateAndRetry?: () => void;
 }
 
+/** Downloads a remote image to the user's machine. */
 const downloadRemoteImage = async (url: string, name: string) => {
   try {
     const response = await fetch(url);
@@ -37,6 +42,7 @@ const downloadRemoteImage = async (url: string, name: string) => {
   } catch { /* silently ignore if URL has expired */ }
 };
 
+/** Creates a download link for a text file and triggers the save. */
 const downloadTextFile = (filename: string, content: string) => {
   const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
   const url = URL.createObjectURL(blob);
@@ -47,6 +53,7 @@ const downloadTextFile = (filename: string, content: string) => {
   URL.revokeObjectURL(url);
 };
 
+/** Decodes a base64 string into a Blob and triggers a download. */
 const downloadBinaryFile = (filename: string, mimeType: string, base64Data: string) => {
   const binary = atob(base64Data);
   const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));

@@ -7,12 +7,24 @@ import { Volume2 } from 'lucide-react';
 import type { PlaygroundTtsProvider } from '../../types/playground-types';
 import { speakWithWebSpeech } from '../../lib/playground/tts';
 
+/** Props for {@link TextToSpeechButton}. */
 export interface TextToSpeechButtonProps {
+  /** The text content to read aloud when the button is pressed. */
   text: string;
+  /** Optional custom TTS provider (falls back to Web Speech API when absent). */
   ttsProvider?: PlaygroundTtsProvider;
+  /** Called with an error message if speech generation fails. */
   onError?: (message: string) => void;
 }
 
+/**
+ * Press-to-play text-to-speech button.
+ *
+ * Uses the provided `ttsProvider` (e.g. a Worker TTS endpoint) when available;
+ * otherwise falls back to the browser's native Web Speech API. Shows a loading
+ * spinner while audio is being generated and renders an inline audio player
+ * once a URL or blob is available.
+ */
 export const TextToSpeechButton: React.FC<TextToSpeechButtonProps> = ({
   text,
   ttsProvider,
@@ -21,6 +33,7 @@ export const TextToSpeechButton: React.FC<TextToSpeechButtonProps> = ({
   const [isGenerating, setIsGenerating] = useState(false);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
 
+  /** Revokes the Object URL for the previous blob when `audioUrl` changes or unmounts. */
   useEffect(
     () => () => {
       if (audioUrl?.startsWith('blob:')) {
@@ -30,6 +43,7 @@ export const TextToSpeechButton: React.FC<TextToSpeechButtonProps> = ({
     [audioUrl],
   );
 
+  /** Generates speech/audio from `text` via the configured TTS provider or Web Speech API. */
   const handlePress = async () => {
     if (!text.trim()) return;
 

@@ -5,17 +5,29 @@ import React, { useEffect } from 'react';
 import { Button } from '@heroui/react';
 import { Download, X } from 'lucide-react';
 
+/** Props for {@link ImageModal}. */
 export interface ImageModalProps {
+  /** Data-URL or blob URL of the image to display. */
   imageUrl: string | null;
+  /** Suggested filename when downloading the image. */
   filename?: string;
+  /** Closes the modal (e.g. via the backdrop or ESC key). */
   onClose: () => void;
 }
 
+/**
+ * Full-screen image preview modal.
+ *
+ * Renders an `<img>` inside a centered dialog overlay. Supports closing via
+ * backdrop click or the Escape key (registered on `imageUrl` change). A
+ * download button triggers a client-side save of the image.
+ */
 export const ImageModal: React.FC<ImageModalProps> = ({
   imageUrl,
   filename = 'image.png',
   onClose,
 }) => {
+  /** Registers an Escape-key listener to close the modal while an image is displayed. */
   useEffect(() => {
     if (!imageUrl) return undefined;
 
@@ -29,6 +41,7 @@ export const ImageModal: React.FC<ImageModalProps> = ({
 
   if (!imageUrl) return null;
 
+  /** Triggers a client-side download of the displayed image using the resolved filename. */
   const handleDownload = () => {
     const link = document.createElement('a');
     link.href = imageUrl;

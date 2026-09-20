@@ -4,14 +4,23 @@
 import React from 'react';
 import { Label, NumberField, Slider, TextArea } from '@heroui/react';
 
+/** Props for {@link GenerationSettingsPanel}. */
 export interface GenerationSettingsPanelProps {
+  /** Current system prompt text. */
   systemPrompt: string;
+  /** Current temperature value (0–2). */
   temperature: number;
+  /** Current maximum output tokens. */
   maxTokens: number;
+  /** Current top-p (nucleus sampling) value (0–1). */
   topP: number;
+  /** Called when the system prompt textarea changes. */
   onSystemPromptChange: (value: string) => void;
+  /** Called when the temperature slider changes. */
   onTemperatureChange: (value: number) => void;
+  /** Called when the max tokens number field changes. */
   onMaxTokensChange: (value: number) => void;
+  /** Called when the top-p number field changes. */
   onTopPChange: (value: number) => void;
 }
 

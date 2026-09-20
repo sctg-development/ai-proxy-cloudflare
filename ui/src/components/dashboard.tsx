@@ -706,9 +706,13 @@ export const Dashboard: React.FC = () => {
   };
 
   /**
-   * Builds the request parameters for testing a provider key against the
-   * provider's own API. Returns the URL, auth header name/value, and the
-   * request body appropriate for the provider's protocol.
+   * Builds the request URL, auth header, and body for testing a provider API key
+   * against the provider's own chat endpoint.
+   *
+   * @param providerId - The provider dictionary key.
+   * @param keyIndex - Array index of the key to test.
+   * @param modelId - Optional model ID to use; falls back to the lowest-priority chat model.
+   * @returns The request parameters, or null if the provider/key/model is missing.
    */
   const buildKeyTestParams = (
     providerId: string,
@@ -849,8 +853,12 @@ export const Dashboard: React.FC = () => {
   };
 
   /**
-   * Generates a multi-line bash `curl` command for the provider key and copies
-   * it to the clipboard, so the user can paste it into their local terminal.
+   * Generates and copies a bash `curl` command for the provider key to the clipboard,
+   * so the user can test the key in their local terminal.
+   *
+   * @param providerId - The provider dictionary key.
+   * @param keyIndex - Array index of the key to curl.
+   * @param modelId - Optional model ID for the request body.
    */
   const curlTestProviderKey = (providerId: string, keyIndex: number, modelId?: string) => {
     if (!activeConfig) return;

@@ -19,10 +19,18 @@ import React from 'react';
 import { useAi } from '../hooks/use-ai';
 import { LoginScreen } from './login-screen';
 
+/** Props for {@link MainLayout}. */
 interface MainLayoutProps {
+  /** Page content to render when the user is authenticated. */
   children: React.ReactNode;
 }
 
+/**
+ * Top-level layout wrapper.
+ *
+ * Shows the {@link LoginScreen} when the user is not authenticated;
+ * otherwise renders a sidebar navigation placeholder with the passed-in children.
+ */
 export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const { isAuthenticated } = useAi();
 

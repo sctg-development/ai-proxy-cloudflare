@@ -5,14 +5,21 @@ import React from 'react';
 import type { PlaygroundMessage } from '../../types/playground-types';
 import { MessageBubble } from './message-bubble';
 
+/** Props for {@link MessageList}. */
 export interface MessageListProps {
+  /** All messages in the conversation, oldest first. */
   messages: PlaygroundMessage[];
+  /** Index of the message to resume from, or null if not resuming. */
   resumeFromIndex: number | null;
+  /** Sets which message to resume the conversation from (pass -1 to cancel). */
   onResumeFromIndex: (index: number) => void;
+  /** Retries the last assistant error message without key rotation. */
   onRetry?: () => void;
+  /** Retries the last assistant error message with key rotation. */
   onRotateAndRetry?: () => void;
 }
 
+/** Returns true when the last message is an assistant error (text starting with "Error:"). */
 const isAssistantError = (msg: PlaygroundMessage): boolean =>
   msg.role === 'assistant' &&
   msg.parts.some((p) => p.type === 'text' && p.text.startsWith('Error:'));

@@ -57,13 +57,19 @@ import { MultimodalInput } from './playground/multimodal-input';
 import { EquivalentCodePanel } from './playground/equivalent-code-panel';
 import { ConversationHistorySidebar } from './playground/conversation-history-sidebar';
 
+/** Props for {@link PlaygroundPanel}. */
 export interface PlaygroundPanelProps {
+  /** The full decrypted vault config used to resolve provider/model/key options. */
   activeConfig: AiConfig;
+  /** Optional conversation ID for deep-linking or restoring state. */
   conversationId?: string;
+  /** Pre-populated message history (e.g. from a URL parameter or saved session). */
   initialHistory?: PlaygroundMessage[];
+  /** Optional audio transcription provider for voice-to-text in the input area. */
   transcriber?: PlaygroundTranscriber;
 }
 
+/** Type guard: returns true if `value` is a valid `PlaygroundMessage[]` array. */
 const isPlaygroundMessageArray = (value: unknown): value is PlaygroundMessage[] => {
   if (!Array.isArray(value)) return false;
 
@@ -77,6 +83,14 @@ const isPlaygroundMessageArray = (value: unknown): value is PlaygroundMessage[] 
   ));
 };
 
+/**
+ * Embedded multimodal chat playground.
+ *
+ * Orchestrates provider/model/key selection, inference parameters, streaming
+ * requests, conversation history, IndexedDB persistence, and equivalent-code
+ * generation (curl / Python / fetch). Supports both standard chat completions
+ * and Mistral's `/v1/conversations` image-generation endpoint.
+ */
 export const PlaygroundPanel: React.FC<PlaygroundPanelProps> = ({
   activeConfig,
   conversationId: _conversationId = DEFAULT_CONVERSATION_ID,
@@ -157,6 +171,7 @@ export const PlaygroundPanel: React.FC<PlaygroundPanelProps> = ({
     ? buildMistralConversationsUrl(selection.provider)
     : undefined;
 
+  /** Builds the URL and request body for a single chat completion API call. */
   const sendPrompt = async () => {
     const providerKey = selection.resolveProviderKey();
 
@@ -205,6 +220,7 @@ export const PlaygroundPanel: React.FC<PlaygroundPanelProps> = ({
     }
   };
 
+  /** Sets or clears the resume-from-index marker. Pass -1 to cancel resume mode. */
   const handleResumeFromIndex = (index: number) => {
     if (index < 0) {
       conversation.setResumeFromIndex(null);
@@ -213,12 +229,14 @@ export const PlaygroundPanel: React.FC<PlaygroundPanelProps> = ({
     }
   };
 
+  /** Clears the conversation and allocates a new UUID for a fresh chat. */
   const handleNewConversation = () => {
     setConversationId(crypto.randomUUID());
     conversation.clearConversation();
     request.clearError();
   };
 
+  /** Switches to the conversation with the given ID, clearing the current draft. */
   const handleSelectConversation = (id: string) => {
     if (id === conversationId) return;
     conversation.clearConversation();
@@ -226,6 +244,7 @@ export const PlaygroundPanel: React.FC<PlaygroundPanelProps> = ({
     request.clearError();
   };
 
+  /** Deletes a saved conversation from IndexedDB; starts a new one if it was active. */
   const handleDeleteConversation = (id: string) => {
     void idb.deleteConversation(id);
     if (id === conversationId) {
@@ -233,6 +252,7 @@ export const PlaygroundPanel: React.FC<PlaygroundPanelProps> = ({
     }
   };
 
+  /** Exports the current conversation as a JSON file with a timestamped filename. */
   const exportConversation = () => {
     const payload = {
       id: conversationId,
@@ -252,6 +272,7 @@ export const PlaygroundPanel: React.FC<PlaygroundPanelProps> = ({
     URL.revokeObjectURL(url);
   };
 
+  /** Imports a JSON file exported by `exportConversation`, loading its messages into the draft. */
   const importConversation = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = '';
@@ -274,6 +295,7 @@ export const PlaygroundPanel: React.FC<PlaygroundPanelProps> = ({
     }
   };
 
+  /** Re-sends the last failed assistant turn, optionally rotating to the next available API key. */
   const retryLastRequest = async (rotateKey: boolean) => {
     if (!selection.provider || !selection.modelId) return;
 

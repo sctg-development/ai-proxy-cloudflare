@@ -6,16 +6,25 @@ import { Button } from '@heroui/react';
 import { MessageSquare, PanelRight, Plus, Trash2 } from 'lucide-react';
 import type { PlaygroundConversation } from '../../types/playground-types';
 
+/** Props for {@link ConversationHistorySidebar}. */
 export interface ConversationHistorySidebarProps {
+  /** Saved conversations to display in the sidebar. */
   conversations: PlaygroundConversation[];
+  /** ID of the currently active conversation. */
   activeConversationId: string;
+  /** Whether the sidebar is visible. */
   isOpen: boolean;
+  /** Toggles sidebar visibility. */
   onToggle: () => void;
+  /** Switches to the conversation with the given ID. */
   onSelect: (id: string) => void;
+  /** Deletes the conversation with the given ID. */
   onDelete: (id: string) => void;
+  /** Creates a new empty conversation. */
   onNew: () => void;
 }
 
+/** Formats a timestamp into a human-readable relative time string (e.g. "2h ago"). */
 const formatTime = (ts: number): string => {
   const minutes = Math.floor((Date.now() - ts) / 60_000);
   if (minutes < 1) return 'just now';

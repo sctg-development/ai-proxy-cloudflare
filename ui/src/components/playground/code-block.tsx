@@ -5,12 +5,22 @@ import React from 'react';
 import { Button } from '@heroui/react';
 import { Download } from 'lucide-react';
 
+/** Props for {@link CodeBlock}. */
 export interface CodeBlockProps {
+  /** The source code text to display. */
   code: string;
+  /** Programming language identifier (e.g. "typescript", "python") used for display. */
   language: string;
+  /** Suggested filename when downloading the code block. */
   filename: string;
 }
 
+/**
+ * Renders a downloadable code block.
+ *
+ * Displays the code in a styled `<pre>` element with a header showing the
+ * language and a download button that triggers a client-side file save.
+ */
 export const CodeBlock: React.FC<CodeBlockProps> = ({
   code,
   language,

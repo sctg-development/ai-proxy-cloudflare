@@ -6,14 +6,19 @@ import { X } from 'lucide-react';
 import type { PlaygroundPart } from '../../types/playground-types';
 import { formatBytes, revokePartObjectUrls } from '../../lib/playground/multimodal-files';
 
+/** Props for {@link FilePreviewItem}. */
 interface FilePreviewItemProps {
+  /** The attachment part to render. */
   part: PlaygroundPart;
+  /** Array index of the part, used as the key and passed to `onRemove`. */
   index: number;
+  /** Removes the part at `index` from the message draft. */
   onRemove: (index: number) => void;
 }
 
+/** Renders a single attachment chip with a type-specific preview icon. */
 const FilePreviewItem: React.FC<FilePreviewItemProps> = ({ part, index, onRemove }) => {
-  // Revoke Object URLs when the part is removed from the DOM.
+  /** Cleanup effect: revokes Object URLs when the part is removed from the DOM. */
   useEffect(
     () => () => { revokePartObjectUrls(part); },
     [part],
@@ -64,8 +69,11 @@ const FilePreviewItem: React.FC<FilePreviewItemProps> = ({ part, index, onRemove
   );
 };
 
+/** Props for {@link FilePreviewList}. */
 export interface FilePreviewListProps {
+  /** Attachment parts to display as preview chips. */
   parts: PlaygroundPart[];
+  /** Removes the part at the given index. */
   onRemove: (index: number) => void;
 }
 

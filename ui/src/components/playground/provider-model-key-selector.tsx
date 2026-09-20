@@ -8,15 +8,25 @@ import type { AiModel, AiProvider } from '../../types/ai-config';
 import { maskApiKey } from '../../lib/provider-models';
 import { AUTO_ROUND_ROBIN_KEY } from '../../lib/playground/constants';
 
+/** Props for {@link ProviderModelKeySelector}. */
 export interface ProviderModelKeySelectorProps {
+  /** All available provider IDs for the provider dropdown. */
   providerIds: string[];
+  /** Currently selected provider ID. */
   providerId: string;
+  /** Currently selected model ID within the provider. */
   modelId: string;
+  /** Currently selected API key (or the auto round-robin sentinel). */
   selectedKey: string;
+  /** Chat-capable models for the model dropdown (sorted by priority). */
   chatModels: AiModel[];
+  /** Non-expired, usable API keys for the key dropdown. */
   usableKeys: AiProvider['keys'];
+  /** Called when the user selects a different provider. */
   onProviderChange: (id: string) => void;
+  /** Called when the user selects a different model. */
   onModelChange: (id: string) => void;
+  /** Called when the user selects a different API key. */
   onSelectedKeyChange: (key: string) => void;
 }
 

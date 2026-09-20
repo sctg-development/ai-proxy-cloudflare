@@ -22,27 +22,48 @@ import { ApiService, type QuotaObservation } from '../lib/api';
 import * as XLSX from 'xlsx';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
+/** Raw per-provider model stats returned by the Worker `/v1/keypool/stats` endpoint. */
 interface ApiStatsData {
+  /** Time window label (e.g. "day", "hour"). */
   period: string;
+  /** Provider identifier. */
   provider: string;
+  /** Model ID. */
   modelId: string;
+  /** Owner of the API key that served the request. */
   keyOwner: string;
+  /** Masked hint of the API key. */
   keyHint: string;
+  /** Number of prompt tokens consumed. */
   promptTokens: number;
+  /** Number of completion tokens consumed. */
   completionTokens: number;
+  /** Number of requests in this bucket. */
   requestCount: number;
 }
 
+/** Aggregated stats displayed in the overview charts and tables. */
 interface StatsData {
+  /** Time window label. */
   period: string;
+  /** Total requests in this period. */
   totalRequests: number;
+  /** Total prompt + completion tokens in this period. */
   totalTokens: number;
+  /** Per-provider breakdown of requests and tokens. */
   providers: Record<string, {
     totalRequests: number;
     totalTokens: number;
   }>;
 }
 
+/**
+ * Usage statistics panel.
+ *
+ * Fetches request/token data from the Worker stats endpoint, renders
+ * line/bar charts with Recharts, displays a detailed stats table, a
+ * provider breakdown table, and (for Mistral) quota-exhaustion estimates.
+ */
 export const StatsPanel: React.FC = () => {
   const [apiStatsData, setApiStatsData] = useState<ApiStatsData[]>([]);
   const [statsData, setStatsData] = useState<StatsData[]>([]);
@@ -53,6 +74,7 @@ export const StatsPanel: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [quotaObservations, setQuotaObservations] = useState<QuotaObservation[]>([]);
 
+  /** Fetches stats from the Worker for the current time window and granularity. */
   const fetchStats = async () => {
     setLoading(true);
     setError(null);
@@ -159,6 +181,7 @@ export const StatsPanel: React.FC = () => {
     setStatsData(Object.values(aggregatedData));
   }, [apiStatsData]);
 
+  /** Exports the aggregated stats data to an XLSX workbook using SheetJS. */
   const exportToXLSX = () => {
     const worksheet = XLSX.utils.json_to_sheet(
       statsData.map((stat) => ({

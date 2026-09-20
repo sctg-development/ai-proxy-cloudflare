@@ -27,12 +27,21 @@ import { Copy, Plus, RefreshCw, Shield, Trash2, UserPlus, Users } from 'lucide-r
 import { useAi } from '../hooks/use-ai';
 import { ApiService, type GroupMember, type GroupSummary } from '../lib/api';
 
-/** A freshly created/regenerated API key, shown exactly once. */
+/** A freshly created or regenerated API key, shown to the user exactly once. */
 interface RevealedKey {
+  /** Username the key belongs to. */
   username: string;
+  /** The raw API key string (never stored in state beyond display). */
   key: string;
 }
 
+/**
+ * Administration panel for group and user management.
+ *
+ * Superadmins can create and delete groups. Group admins (and superadmins)
+ * can add/remove users, toggle roles, and regenerate API keys for members
+ * of their group. New/regenerated keys are shown once in an inline alert.
+ */
 export const AdminPanel: React.FC = () => {
   const { userContext } = useAi();
   const isSuperadmin = userContext?.role === 'superadmin';
@@ -83,7 +92,7 @@ export const AdminPanel: React.FC = () => {
     }
   }, [selectedGroupId, reloadMembers]);
 
-  /** Wraps an admin action with busy/error handling. */
+  /** Wraps an async admin action with busy/error state management. */
   const run = async (action: () => Promise<void>) => {
     setBusy(true);
     setError(null);
@@ -96,6 +105,7 @@ export const AdminPanel: React.FC = () => {
     }
   };
 
+  /** Creates a new group from the form input. */
   const handleCreateGroup = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const name = newGroupName.trim();
@@ -107,6 +117,7 @@ export const AdminPanel: React.FC = () => {
     });
   };
 
+  /** Prompts for confirmation, then deletes a group (and optionally its members). */
   const handleDeleteGroup = (group: GroupSummary) => {
     if (group.memberCount > 0) {
       if (!confirm(`Group "${group.name}" still has ${group.memberCount} member(s). Delete the group AND its members?`)) {
@@ -122,6 +133,7 @@ export const AdminPanel: React.FC = () => {
     });
   };
 
+  /** Creates a new user in the selected group and reveals the generated key. */
   const handleCreateUser = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const username = newUsername.trim();
@@ -136,6 +148,7 @@ export const AdminPanel: React.FC = () => {
     });
   };
 
+  /** Toggles a member's role between 'user' and 'admin'. */
   const handleToggleRole = (member: GroupMember) => {
     if (!selectedGroupId) return;
     const nextRole = member.role === 'admin' ? 'user' : 'admin';
@@ -145,6 +158,7 @@ export const AdminPanel: React.FC = () => {
     });
   };
 
+  /** Regenerates a member's API key after user confirmation. */
   const handleRegenerateKey = (member: GroupMember) => {
     if (!selectedGroupId) return;
     if (!confirm(`Regenerate the API key of "${member.username}"? The current key stops working immediately.`)) return;
@@ -155,6 +169,7 @@ export const AdminPanel: React.FC = () => {
     });
   };
 
+  /** Removes a user from the selected group (cannot delete yourself). */
   const handleDeleteUser = (member: GroupMember) => {
     if (!selectedGroupId) return;
     if (!confirm(`Remove "${member.username}" from the group?`)) return;
